@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DbcController } from "../src/dbc/DbcController.js";
 import { DbcParser } from "../src/dbc/DbcParser.js";
+import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
+import { MockTransport } from "../src/transport/MockTransport.js";
 import type { DbcFile } from "../src/dbc/types.js";
+import lightsCsv from "./fixtures/lights.csv?raw";
 
 const nissanDbc: DbcFile = {
   name: "nissan-sentra-2010.dbc",
@@ -132,4 +135,219 @@ describe("Nissan Sentra DBC", () => {
       { name: "PassengerRearDoorOpen", value: 1 },
     ]);
   });
+
+  it("streams captured lights CSV frames at recorded timestamps into vehicle state", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "sentra",
+      transport,
+      dbcFiles: [nissanDbc],
+    });
+
+    try {
+      const unsubscribe = await car.subscribe({
+        FrontLightMode: { frequencyHz: 10 },
+        HighBeam: { frequencyHz: 10 },
+        TurnSignalTick: { frequencyHz: 10 },
+        DriverFrontDoorOpen: { frequencyHz: 10 },
+        PassengerFrontDoorOpen: { frequencyHz: 10 },
+        DriverRearDoorOpen: { frequencyHz: 10 },
+        PassengerRearDoorOpen: { frequencyHz: 10 },
+      });
+      const emittedFrames: StreamedFrame[] = [];
+      let previousState: Record<string, unknown> | undefined;
+      const stream = streamCsvFramesAtRecordedTimes(lightsCsv, transport, (frame) => {
+        const state = car.state.snapshot();
+        emittedFrames.push({
+          ...frame,
+          state,
+        });
+        if (stateChanged(previousState, state)) {
+          console.log(formatStateChange(frame, state));
+          previousState = state;
+        }
+      });
+
+      expect(transport.subscriptions).toHaveLength(1);
+      expect(transport.subscriptions[0]).toMatchObject({
+        signalNames: [
+          "FrontLightMode",
+          "HighBeam",
+          "TurnSignalTick",
+          "DriverFrontDoorOpen",
+          "PassengerFrontDoorOpen",
+          "DriverRearDoorOpen",
+          "PassengerRearDoorOpen",
+        ],
+        frequencyHz: 10,
+      });
+      expect(emittedFrames).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(stream.totalDurationMs);
+
+      expect(emittedFrames).toHaveLength(stream.frames.length);
+      expect(emittedFrames[0]).toMatchObject({
+        elapsedMs: 0,
+        state: {
+          FrontLightMode: 0,
+          HighBeam: 0,
+          TurnSignalTick: 0,
+        },
+      });
+      expect(emittedFrames.at(-1)).toMatchObject({
+        elapsedMs: stream.totalDurationMs,
+        state: {
+          FrontLightMode: 0,
+          HighBeam: 0,
+          TurnSignalTick: 0,
+          DriverFrontDoorOpen: 0,
+          PassengerFrontDoorOpen: 0,
+          DriverRearDoorOpen: 0,
+          PassengerRearDoorOpen: 0,
+        },
+      });
+      expect(stateForData(emittedFrames, "0406002A00")).toMatchObject({
+        FrontLightMode: 2,
+        HighBeam: 0,
+        TurnSignalTick: 0,
+      });
+      expect(stateForData(emittedFrames, "06060000000020")).toMatchObject({
+        FrontLightMode: 3,
+        HighBeam: 0,
+        TurnSignalTick: 0,
+      });
+      expect(stateForData(emittedFrames, "06260000000020")).toMatchObject({
+        FrontLightMode: 3,
+        HighBeam: 0,
+        TurnSignalTick: 1,
+      });
+      expect(stateForData(emittedFrames, "06460000000020")).toMatchObject({
+        FrontLightMode: 3,
+        HighBeam: 0,
+        TurnSignalTick: 2,
+      });
+      expect(stateForData(emittedFrames, "040E000000")).toMatchObject({
+        FrontLightMode: 2,
+        HighBeam: 1,
+        TurnSignalTick: 0,
+      });
+      expect(stateForData(emittedFrames, "06660000000020")).toMatchObject({
+        FrontLightMode: 3,
+        HighBeam: 0,
+        TurnSignalTick: 3,
+      });
+
+      await unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+
+interface CapturedFrame {
+  canId: number;
+  data: string;
+  timestamp: number;
+}
+
+interface StreamedFrame extends CapturedFrame {
+  elapsedMs: number;
+  state: Record<string, unknown>;
+}
+
+function streamCsvFramesAtRecordedTimes(
+  csv: string,
+  transport: MockTransport,
+  onFrame: (frame: Omit<StreamedFrame, "state">) => void,
+): { frames: CapturedFrame[]; totalDurationMs: number } {
+  const frames = parseCsvFrames(csv);
+  const firstTimestamp = frames[0]?.timestamp;
+  if (firstTimestamp === undefined) {
+    throw new Error("CSV must include at least one frame");
+  }
+
+  for (const frame of frames) {
+    const elapsedMs = timestampDeltaMs(firstTimestamp, frame.timestamp);
+    setTimeout(() => {
+      transport.emitFrame({
+        canId: frame.canId,
+        data: hexToBytes(frame.data),
+      });
+      onFrame({
+        ...frame,
+        elapsedMs,
+      });
+    }, elapsedMs);
+  }
+
+  return {
+    frames,
+    totalDurationMs: timestampDeltaMs(firstTimestamp, frames.at(-1)?.timestamp ?? firstTimestamp),
+  };
+}
+
+function parseCsvFrames(csv: string): CapturedFrame[] {
+  const frames: CapturedFrame[] = [];
+  for (const line of csv.trim().split("\n").slice(1)) {
+    const [canId, data, timestamp] = line.split(",");
+    if (canId === undefined || data === undefined || timestamp === undefined) {
+      throw new Error(`Invalid CSV row: ${line}`);
+    }
+
+    frames.push({
+      canId: Number.parseInt(canId, 16),
+      data,
+      timestamp: Number(timestamp),
+    });
+  }
+
+  return frames;
+}
+
+function stateForData(frames: StreamedFrame[], data: string): Record<string, unknown> {
+  const frame = frames.find((candidate) => candidate.data === data);
+  if (frame === undefined) {
+    throw new Error(`Expected CSV frame ${data}`);
+  }
+
+  return frame.state;
+}
+
+function timestampDeltaMs(firstTimestamp: number, timestamp: number): number {
+  return Math.round((timestamp - firstTimestamp) * 1000);
+}
+
+function stateChanged(previous: Record<string, unknown> | undefined, current: Record<string, unknown>): boolean {
+  if (previous === undefined) {
+    return true;
+  }
+
+  return stateKeys.some((key) => previous[key] !== current[key]);
+}
+
+function formatStateChange(frame: Omit<StreamedFrame, "state">, state: Record<string, unknown>): string {
+  const decoded = stateKeys.map((key) => `${key}=${String(state[key])}`).join(" ");
+  return `[lights.csv +${frame.elapsedMs}ms] can_id=${frame.canId.toString(16).toUpperCase()} data=${frame.data} ${decoded}`;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(Math.ceil(hex.length / 2));
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2).padEnd(2, "0"), 16);
+  }
+  return bytes;
+}
+
+const stateKeys = [
+  "FrontLightMode",
+  "HighBeam",
+  "TurnSignalTick",
+  "DriverFrontDoorOpen",
+  "PassengerFrontDoorOpen",
+  "DriverRearDoorOpen",
+  "PassengerRearDoorOpen",
+];
