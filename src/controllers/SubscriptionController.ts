@@ -1,19 +1,19 @@
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CanFrame, SubscriptionOptions, Unsubscribe, VehicleSignal } from "../dbc/types.js";
+import type { CanFrame, SubscriptionOptions, Unsubscribe, VehicleSignal, VehicleSignalState } from "../dbc/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
 type Timer = ReturnType<typeof setTimeout>;
 
 interface ActiveSubscription {
-  signal: VehicleSignal;
+  state: VehicleSignalState;
   opts: SubscriptionOptions;
   startedAt: number;
   timer?: Timer;
 }
 
 interface SubscriptionRequest {
-  signal: VehicleSignal;
+  state: VehicleSignalState;
   opts?: SubscriptionOptions;
 }
 
@@ -28,7 +28,7 @@ export class SubscriptionController {
   ) {}
 
   async add(signal: VehicleSignal, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
-    const unsubscribe = await this.addMany([{ signal, opts }]);
+    const unsubscribe = await this.addMany([{ state: { name: signal.name, signal }, opts }]);
     return unsubscribe;
   }
 
@@ -36,31 +36,31 @@ export class SubscriptionController {
     const affectedCanIds = new Set<number>();
     const startedAt = Date.now();
 
-    for (const { signal } of requests) {
-      this.removeActive(signal.name, affectedCanIds);
+    for (const { state } of requests) {
+      this.removeActive(state.name, affectedCanIds);
     }
 
     for (const request of requests) {
       const opts = request.opts ?? {};
       const active: ActiveSubscription = {
-        signal: request.signal,
+        state: request.state,
         opts,
         startedAt,
       };
 
       if (opts.durationMs !== undefined) {
         active.timer = setTimeout(() => {
-          void this.cancel(request.signal.name);
+          void this.cancel(request.state.name);
         }, opts.durationMs);
       }
 
-      this.activeBySignal.set(request.signal.name, active);
-      this.getOrCreateFrameSubscriptions(request.signal.canId).set(request.signal.name, active);
-      affectedCanIds.add(request.signal.canId);
+      this.activeBySignal.set(request.state.name, active);
+      this.getOrCreateFrameSubscriptions(request.state.signal.canId).set(request.state.name, active);
+      affectedCanIds.add(request.state.signal.canId);
     }
 
     await this.syncTransportSubscriptions(affectedCanIds);
-    return () => this.cancelMany(requests.map((request) => request.signal.name));
+    return () => this.cancelMany(requests.map((request) => request.state.name));
   }
 
   handleFrame(frame: CanFrame): void {
@@ -70,9 +70,13 @@ export class SubscriptionController {
     }
 
     const decoded = this.dbc.decodeFrame(frame);
-    for (const { name, value } of decoded) {
-      if (activeSignals.has(name)) {
-        this.state.update(name, value);
+    for (const { signal, value } of decoded) {
+      for (const active of activeSignals.values()) {
+        if (active.state.signal.name !== signal.name) {
+          continue;
+        }
+
+        this.state.update(active.state.name, decodeSubscriptionStateValue(active.state, value));
       }
     }
   }
@@ -117,14 +121,14 @@ export class SubscriptionController {
     }
 
     this.activeBySignal.delete(signalName);
-    const frameSubscriptions = this.activeByCanId.get(active.signal.canId);
+    const frameSubscriptions = this.activeByCanId.get(active.state.signal.canId);
     frameSubscriptions?.delete(signalName);
 
     if (frameSubscriptions?.size === 0) {
-      this.activeByCanId.delete(active.signal.canId);
+      this.activeByCanId.delete(active.state.signal.canId);
     }
 
-    affectedCanIds.add(active.signal.canId);
+    affectedCanIds.add(active.state.signal.canId);
   }
 
   private async syncTransportSubscriptions(canIds: Set<number>): Promise<void> {
@@ -149,6 +153,14 @@ export class SubscriptionController {
       ...mergeSubscriptionOptions(Array.from(frameSubscriptions.values())),
     });
   }
+}
+
+function decodeSubscriptionStateValue(state: VehicleSignalState, value: unknown): unknown {
+  if (state.enumValue === undefined) {
+    return value;
+  }
+
+  return value === state.enumValue ? 1 : 0;
 }
 
 function mergeSubscriptionOptions(active: ActiveSubscription[]): SubscriptionOptions {

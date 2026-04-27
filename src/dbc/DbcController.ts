@@ -2,7 +2,7 @@ import { DbcParser } from "./DbcParser.js";
 import { SignalClassifier, type SignalClassifierOptions } from "./SignalClassifier.js";
 import { SignalRegistry } from "./SignalRegistry.js";
 import { decodeFrameSignals, decodeSignalValue, encodeSignalValue, isCodecSignal } from "./codec.js";
-import type { CanFrame, DbcFile, DecodedSignalValue, VehicleSignal } from "./types.js";
+import type { CanFrame, DbcFile, DecodedSignalValue, VehicleSignal, VehicleSignalState } from "./types.js";
 
 export interface DbcControllerOptions {
   classifier?: SignalClassifierOptions;
@@ -29,6 +29,10 @@ export class DbcController {
 
   resolve(name: string): VehicleSignal {
     return this.signals.resolve(name);
+  }
+
+  resolveState(name: string): VehicleSignalState {
+    return this.signals.resolveState(name);
   }
 
   all(): VehicleSignal[] {

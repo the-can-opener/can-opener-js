@@ -2,7 +2,7 @@ import { CommandController } from "../controllers/CommandController.js";
 import { PidController } from "../controllers/PidController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CommandOptions, DbcFile, SubscriptionOptions, SubscriptionRegistry, Unsubscribe, VehicleSignal } from "../dbc/types.js";
+import type { CommandOptions, DbcFile, SubscriptionOptions, SubscriptionRegistry, Unsubscribe, VehicleSignalState } from "../dbc/types.js";
 import { SignalProtocolError } from "../errors.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
@@ -15,7 +15,7 @@ export interface VirtualVehicleInternals {
 }
 
 interface ResolvedSubscriptionRequest {
-  signal: VehicleSignal;
+  state: VehicleSignalState;
   opts: SubscriptionOptions;
 }
 
@@ -42,13 +42,13 @@ export class VirtualVehicle {
   async subscribe(signalNameOrSubscriptions: string | SubscriptionRegistry, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
     if (typeof signalNameOrSubscriptions !== "string") {
       const requests: ResolvedSubscriptionRequest[] = Object.entries(signalNameOrSubscriptions).map(([signalName, subscriptionOptions]) => {
-        const signal = this.dbc.resolve(signalName);
-        if (signal.protocol !== "frame") {
-          throw new SignalProtocolError(signalName, "frame", signal.protocol);
+        const state = this.dbc.resolveState(signalName);
+        if (state.signal.protocol !== "frame") {
+          throw new SignalProtocolError(signalName, "frame", state.signal.protocol);
         }
 
         return {
-          signal,
+          state,
           opts: subscriptionOptions ?? {},
         };
       });
@@ -57,12 +57,12 @@ export class VirtualVehicle {
     }
 
     const signalName = signalNameOrSubscriptions;
-    const signal = this.dbc.resolve(signalName);
-    if (signal.protocol !== "frame") {
-      throw new SignalProtocolError(signalName, "frame", signal.protocol);
+    const state = this.dbc.resolveState(signalName);
+    if (state.signal.protocol !== "frame") {
+      throw new SignalProtocolError(signalName, "frame", state.signal.protocol);
     }
 
-    return await this.internals.subscriptions.add(signal, opts);
+    return await this.internals.subscriptions.addMany([{ state, opts }]);
   }
 
   async subscribePid(signalName: string, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {

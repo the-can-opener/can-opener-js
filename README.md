@@ -91,6 +91,21 @@ BA_ "DiagnosticTransport" SG_ 201 VEHICLE_SPEED "single";
 
 Signals without `SignalProtocol` default to `frame`.
 
+DBC `VAL_` entries can also expose normalized state names for enum-like signal
+values. This is useful when one physical signal encodes mutually exclusive
+states, but the app wants to subscribe to those states by keyword:
+
+```dbc
+BO_ 1549 LIGHTS_STATUS_60D: 8 BCM
+ SG_ TurnSignalTick : 13|2@1+ (1,0) [0|3] "" Vector__XXX
+
+VAL_ 1549 TurnSignalTick 0 "off" 1 "LEFT_TURN_SIGNAL" 2 "RIGHT_TURN_SIGNAL" 3 "HAZARD_LIGHTS";
+```
+
+`TurnSignalTick` remains the physical DBC signal. `LEFT_TURN_SIGNAL`,
+`RIGHT_TURN_SIGNAL`, and `HAZARD_LIGHTS` are subscribable enum states derived
+from its `VAL_` table.
+
 Supported signal-level attributes:
 
 - `SignalProtocol`: `"frame"` or `"pid"`.
@@ -160,6 +175,12 @@ const unsubscribeBody = await car.subscribe({
 
 await unsubscribeBody();
 ```
+
+Subscriptions may target either a physical DBC signal name or a normalized
+enum-state name defined in a signal's `VAL_` table. For example, subscribing to
+`LEFT_TURN_SIGNAL` watches the parent `TurnSignalTick` CAN frame and updates
+`LEFT_TURN_SIGNAL` to `1` only when `TurnSignalTick` decodes to the matching
+enum value; otherwise it updates to `0`.
 
 When multiple signals share a CAN frame, the transport receives one merged
 subscription request. `frequencyHz` uses the highest active frequency for that
@@ -239,8 +260,10 @@ const dispose = car.state.subscribe(() => {
 dispose();
 ```
 
-State keys are stored by DBC signal name. Property access also accepts common
-camelCase or snake_case variants by converting them to upper snake case.
+State keys are stored by the subscribed name. For physical DBC signals, that is
+the signal name. For `VAL_` enum-state subscriptions, that is the enum-state
+name, such as `LEFT_TURN_SIGNAL`. Property access also accepts common camelCase
+or snake_case variants by converting them to upper snake case.
 
 ## Transport
 

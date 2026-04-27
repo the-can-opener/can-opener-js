@@ -43,6 +43,12 @@ export interface VehicleSignal {
   diagnostic?: DiagnosticBinding;
 }
 
+export interface VehicleSignalState {
+  name: string;
+  signal: VehicleSignal;
+  enumValue?: number;
+}
+
 export interface CanFrame {
   canId: number;
   data: Uint8Array;
@@ -117,7 +123,10 @@ export interface SubscriptionOptions {
   durationMs?: number;
 }
 
-export type SubscriptionRegistry = Record<string, SubscriptionOptions | undefined>;
+export type SubscriptionRegistry = Record<
+  string,
+  SubscriptionOptions | undefined
+>;
 
 export interface CommandOptions extends SubscriptionOptions {
   value: unknown;
