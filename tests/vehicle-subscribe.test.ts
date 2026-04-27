@@ -76,4 +76,29 @@ describe("VirtualVehicle.subscribe", () => {
 
     expect(transport.subscriptions).toHaveLength(0);
   });
+
+  it("declares multiple subscriptions from a registry", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      dbcFiles: [vehicleDbc],
+    });
+
+    const unsubscribe = await car.subscribe({
+      TURN_SIGNAL_LEFT: { frequencyHz: 5 },
+      HIGH_BEAMS: { frequencyHz: 20 },
+    });
+
+    expect(transport.subscriptions).toHaveLength(1);
+    expect(transport.subscriptions[0]).toMatchObject({
+      signalNames: ["TURN_SIGNAL_LEFT", "HIGH_BEAMS"],
+      frequencyHz: 20,
+    });
+
+    await unsubscribe();
+
+    expect(transport.subscriptions).toHaveLength(0);
+  });
 });

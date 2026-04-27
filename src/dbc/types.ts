@@ -112,6 +112,8 @@ export interface SubscriptionOptions {
   durationMs?: number;
 }
 
+export type SubscriptionRegistry = Record<string, SubscriptionOptions | undefined>;
+
 export interface CommandOptions extends SubscriptionOptions {
   value: unknown;
   mask?: number;

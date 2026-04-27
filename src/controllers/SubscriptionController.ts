@@ -12,6 +12,11 @@ interface ActiveSubscription {
   timer?: Timer;
 }
 
+interface SubscriptionRequest {
+  signal: VehicleSignal;
+  opts?: SubscriptionOptions;
+}
+
 export class SubscriptionController {
   private readonly activeBySignal = new Map<string, ActiveSubscription>();
   private readonly activeByCanId = new Map<number, Map<string, ActiveSubscription>>();
@@ -23,24 +28,39 @@ export class SubscriptionController {
   ) {}
 
   async add(signal: VehicleSignal, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
-    await this.cancel(signal.name);
+    const unsubscribe = await this.addMany([{ signal, opts }]);
+    return unsubscribe;
+  }
 
-    const active: ActiveSubscription = {
-      signal,
-      opts,
-      startedAt: Date.now(),
-    };
+  async addMany(requests: SubscriptionRequest[]): Promise<Unsubscribe> {
+    const affectedCanIds = new Set<number>();
+    const startedAt = Date.now();
 
-    if (opts.durationMs !== undefined) {
-      active.timer = setTimeout(() => {
-        void this.cancel(signal.name);
-      }, opts.durationMs);
+    for (const { signal } of requests) {
+      this.removeActive(signal.name, affectedCanIds);
     }
 
-    this.activeBySignal.set(signal.name, active);
-    this.getOrCreateFrameSubscriptions(signal.canId).set(signal.name, active);
-    await this.syncTransportSubscription(signal.canId);
-    return () => this.cancel(signal.name);
+    for (const request of requests) {
+      const opts = request.opts ?? {};
+      const active: ActiveSubscription = {
+        signal: request.signal,
+        opts,
+        startedAt,
+      };
+
+      if (opts.durationMs !== undefined) {
+        active.timer = setTimeout(() => {
+          void this.cancel(request.signal.name);
+        }, opts.durationMs);
+      }
+
+      this.activeBySignal.set(request.signal.name, active);
+      this.getOrCreateFrameSubscriptions(request.signal.canId).set(request.signal.name, active);
+      affectedCanIds.add(request.signal.canId);
+    }
+
+    await this.syncTransportSubscriptions(affectedCanIds);
+    return () => this.cancelMany(requests.map((request) => request.signal.name));
   }
 
   handleFrame(frame: CanFrame): void {
@@ -58,6 +78,35 @@ export class SubscriptionController {
   }
 
   async cancel(signalName: string): Promise<void> {
+    await this.cancelMany([signalName]);
+  }
+
+  cancelAll(): void {
+    void this.cancelMany(Array.from(this.activeBySignal.keys()));
+  }
+
+  private getOrCreateFrameSubscriptions(canId: number): Map<string, ActiveSubscription> {
+    const existing = this.activeByCanId.get(canId);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const created = new Map<string, ActiveSubscription>();
+    this.activeByCanId.set(canId, created);
+    return created;
+  }
+
+  private async cancelMany(signalNames: string[]): Promise<void> {
+    const affectedCanIds = new Set<number>();
+
+    for (const signalName of signalNames) {
+      this.removeActive(signalName, affectedCanIds);
+    }
+
+    await this.syncTransportSubscriptions(affectedCanIds);
+  }
+
+  private removeActive(signalName: string, affectedCanIds: Set<number>): void {
     const active = this.activeBySignal.get(signalName);
     if (active === undefined) {
       return;
@@ -71,30 +120,17 @@ export class SubscriptionController {
     const frameSubscriptions = this.activeByCanId.get(active.signal.canId);
     frameSubscriptions?.delete(signalName);
 
-    if (frameSubscriptions === undefined || frameSubscriptions.size === 0) {
+    if (frameSubscriptions?.size === 0) {
       this.activeByCanId.delete(active.signal.canId);
-      await this.transport.unsubscribe(active.signal.canId);
-      return;
     }
 
-    await this.syncTransportSubscription(active.signal.canId);
+    affectedCanIds.add(active.signal.canId);
   }
 
-  cancelAll(): void {
-    for (const signalName of Array.from(this.activeBySignal.keys())) {
-      void this.cancel(signalName);
+  private async syncTransportSubscriptions(canIds: Set<number>): Promise<void> {
+    for (const canId of canIds) {
+      await this.syncTransportSubscription(canId);
     }
-  }
-
-  private getOrCreateFrameSubscriptions(canId: number): Map<string, ActiveSubscription> {
-    const existing = this.activeByCanId.get(canId);
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const created = new Map<string, ActiveSubscription>();
-    this.activeByCanId.set(canId, created);
-    return created;
   }
 
   private async syncTransportSubscription(canId: number): Promise<void> {

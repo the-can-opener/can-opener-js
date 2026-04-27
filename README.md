@@ -17,8 +17,10 @@ await car.subscribe("ENGINE_RPM", {
   frequencyHz: 10,
   durationMs: 30_000,
 });
-await car.subscribe("TURN_SIGNAL_LEFT", { frequencyHz: 5 });
-await car.subscribe("HIGH_BEAMS", { frequencyHz: 20 });
+await car.subscribe({
+  TURN_SIGNAL_LEFT: { frequencyHz: 5 },
+  HIGH_BEAMS: { frequencyHz: 20 },
+});
 
 const speed = await car.pid("VEHICLE_SPEED");
 const rpm = car.state.engine_rpm;
