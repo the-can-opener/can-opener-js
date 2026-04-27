@@ -1,4 +1,6 @@
 export type SignalProtocol = "frame" | "pid";
+export type SignalValueType = "number" | "ascii" | "bytes";
+export type DiagnosticTransport = "single" | "isotp";
 export type ByteOrder = "little" | "big";
 export type CanPayload = Uint8Array;
 export type AttributeValue = string | number | boolean;
@@ -21,6 +23,8 @@ export interface DiagnosticResponse {
 export interface DiagnosticBinding {
   request: DiagnosticRequest;
   response: DiagnosticResponse;
+  transport?: DiagnosticTransport;
+  responseLength?: number;
 }
 
 export interface VehicleSignal {
@@ -34,6 +38,7 @@ export interface VehicleSignal {
   scale?: number;
   offset?: number;
   unit?: string;
+  valueType?: SignalValueType;
   enumValues?: Record<number, string>;
   diagnostic?: DiagnosticBinding;
 }

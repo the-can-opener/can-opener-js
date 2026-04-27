@@ -1,4 +1,5 @@
 import type { DbcFile } from "../src/dbc/types.js";
+import obd2PidDbcContent from "./fixtures/obd2-pids.dbc?raw";
 
 export const vehicleDbc: DbcFile = {
   name: "vehicle.dbc",
@@ -12,8 +13,12 @@ BA_DEF_ SG_ "SignalProtocol" STRING;
 BA_DEF_ SG_ "Pid" INT 0 65535;
 BA_DEF_ SG_ "RequestCanId" INT 0 536870911;
 BA_DEF_ SG_ "ResponseCanId" INT 0 536870911;
+BA_DEF_ SG_ "DiagnosticServiceId" INT 0 255;
 BA_DEF_ SG_ "UdsServiceId" INT 0 255;
 BA_DEF_ SG_ "UdsDid" INT 0 65535;
+BA_DEF_ SG_ "DiagnosticTransport" STRING;
+BA_DEF_ SG_ "ResponseLength" INT 0 4095;
+BA_DEF_ SG_ "SignalValueType" STRING;
 
 BO_ 100 POWERTRAIN: 8 ECU
  SG_ ENGINE_RPM : 0|16@1+ (0.25,0) [0|16000] "rpm" ECU
@@ -36,6 +41,7 @@ BA_ "SignalProtocol" SG_ 201 VEHICLE_SPEED "pid";
 BA_ "Pid" SG_ 201 VEHICLE_SPEED 13;
 BA_ "RequestCanId" SG_ 201 VEHICLE_SPEED 200;
 BA_ "ResponseCanId" SG_ 201 VEHICLE_SPEED 201;
+BA_ "DiagnosticTransport" SG_ 201 VEHICLE_SPEED "single";
 BA_ "SignalProtocol" SG_ 300 HORN "frame";
 BA_ "SignalProtocol" SG_ 300 TURN_SIGNAL_LEFT "frame";
 BA_ "SignalProtocol" SG_ 300 HIGH_BEAMS "frame";
@@ -43,4 +49,9 @@ BA_ "SignalProtocol" SG_ 400 DOOR_LOCK "frame";
 BA_ "UdsServiceId" SG_ 400 DOOR_LOCK 46;
 BA_ "UdsDid" SG_ 400 DOOR_LOCK 61840;
 `,
+};
+
+export const obd2PidDbc: DbcFile = {
+  name: "obd2-pids.dbc",
+  content: obd2PidDbcContent,
 };

@@ -2,7 +2,7 @@ import { CommandController } from "../controllers/CommandController.js";
 import { PidController } from "../controllers/PidController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CommandOptions, DbcFile, SubscriptionOptions, SubscriptionRegistry, Unsubscribe } from "../dbc/types.js";
+import type { CommandOptions, DbcFile, SubscriptionOptions, SubscriptionRegistry, Unsubscribe, VehicleSignal } from "../dbc/types.js";
 import { SignalProtocolError } from "../errors.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
@@ -12,6 +12,11 @@ export interface VirtualVehicleInternals {
   pids: PidController;
   commands: CommandController;
   disposeFrames: () => void;
+}
+
+interface ResolvedSubscriptionRequest {
+  signal: VehicleSignal;
+  opts: SubscriptionOptions;
 }
 
 export class VirtualVehicle {
@@ -36,7 +41,7 @@ export class VirtualVehicle {
   async subscribe(subscriptions: SubscriptionRegistry): Promise<Unsubscribe>;
   async subscribe(signalNameOrSubscriptions: string | SubscriptionRegistry, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
     if (typeof signalNameOrSubscriptions !== "string") {
-      const requests = Object.entries(signalNameOrSubscriptions).map(([signalName, subscriptionOptions]) => {
+      const requests: ResolvedSubscriptionRequest[] = Object.entries(signalNameOrSubscriptions).map(([signalName, subscriptionOptions]) => {
         const signal = this.dbc.resolve(signalName);
         if (signal.protocol !== "frame") {
           throw new SignalProtocolError(signalName, "frame", signal.protocol);
@@ -60,6 +65,15 @@ export class VirtualVehicle {
     return await this.internals.subscriptions.add(signal, opts);
   }
 
+  async subscribePid(signalName: string, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
+    const signal = this.dbc.resolve(signalName);
+    if (signal.protocol !== "pid") {
+      throw new SignalProtocolError(signalName, "PID", signal.protocol);
+    }
+
+    return await this.internals.pids.subscribe(signal, opts);
+  }
+
   async command(signalName: string, opts: CommandOptions): Promise<void> {
     const signal = this.dbc.resolve(signalName);
     if (signal.protocol !== "frame") {
@@ -73,6 +87,7 @@ export class VirtualVehicle {
     this.state.clear();
     this.dbc.load(files);
     this.internals.subscriptions.cancelAll();
+    this.internals.pids.cancelAllSubscriptions();
     this.internals.pids.clearPending();
     this.internals.commands.clearScheduled();
   }
@@ -83,6 +98,7 @@ export class VirtualVehicle {
 
   async disconnect(): Promise<void> {
     this.internals.subscriptions.cancelAll();
+    this.internals.pids.cancelAllSubscriptions();
     this.internals.pids.clearPending();
     this.internals.commands.clearScheduled();
     this.internals.disposeFrames();

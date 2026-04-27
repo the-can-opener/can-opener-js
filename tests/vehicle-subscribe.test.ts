@@ -101,4 +101,18 @@ describe("VirtualVehicle.subscribe", () => {
 
     expect(transport.subscriptions).toHaveLength(0);
   });
+
+  it("rejects PID signals for frame subscriptions", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      dbcFiles: [vehicleDbc],
+    });
+
+    await expect(car.subscribe("VEHICLE_SPEED")).rejects.toThrow(
+      "VEHICLE_SPEED is not a frame signal (actual protocol: pid)",
+    );
+  });
 });

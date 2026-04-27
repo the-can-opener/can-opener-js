@@ -8,11 +8,20 @@ export interface CodecSignal {
   signed?: boolean;
   scale?: number;
   offset?: number;
+  valueType?: "number" | "ascii" | "bytes";
 }
 
 const DEFAULT_FRAME_BYTES = 8;
 
-export function decodeSignalValue(frame: CanFrame, signal: CodecSignal): number {
+export function decodeSignalValue(frame: CanFrame, signal: CodecSignal): number | string | Uint8Array {
+  if (signal.valueType === "ascii") {
+    return decodeAscii(readSignalBytes(frame.data, signal));
+  }
+
+  if (signal.valueType === "bytes") {
+    return readSignalBytes(frame.data, signal);
+  }
+
   const unsigned = readRaw(frame.data, signal);
   const raw = signal.signed === true ? toSigned(unsigned, signal.length) : unsigned;
   return raw * (signal.scale ?? 1) + (signal.offset ?? 0);
@@ -35,8 +44,8 @@ export function writeSignalValue(data: Uint8Array, signal: CodecSignal, value: u
   writeRaw(data, signal, unsigned);
 }
 
-export function decodeFrameSignals(frame: CanFrame, signals: Iterable<VehicleSignal>): Array<{ signal: VehicleSignal; value: number }> {
-  const decoded: Array<{ signal: VehicleSignal; value: number }> = [];
+export function decodeFrameSignals(frame: CanFrame, signals: Iterable<VehicleSignal>): Array<{ signal: VehicleSignal; value: unknown }> {
+  const decoded: Array<{ signal: VehicleSignal; value: unknown }> = [];
 
   for (const signal of signals) {
     if (!isCodecSignal(signal) || signal.canId !== frame.canId) {
@@ -74,6 +83,17 @@ function readRaw(data: Uint8Array, signal: CodecSignal): number {
     value = (value << 1) | bit;
   }
   return value;
+}
+
+function readSignalBytes(data: Uint8Array, signal: CodecSignal): Uint8Array {
+  assertByteSignalFits(data, signal);
+  const startByte = signal.startBit / 8;
+  const lengthBytes = signal.length / 8;
+  return data.slice(startByte, startByte + lengthBytes);
+}
+
+function decodeAscii(data: Uint8Array): string {
+  return new TextDecoder().decode(data).replace(/\0+$/u, "");
 }
 
 function writeRaw(data: Uint8Array, signal: CodecSignal, value: number): void {
@@ -153,6 +173,18 @@ function assertSignalFits(data: Uint8Array, signal: CodecSignal): void {
     if (position < 0 || position > maxBit) {
       throw new Error(`Signal exceeds ${data.length}-byte CAN frame bounds`);
     }
+  }
+}
+
+function assertByteSignalFits(data: Uint8Array, signal: CodecSignal): void {
+  if (signal.startBit % 8 !== 0 || signal.length % 8 !== 0) {
+    throw new Error("Byte or ASCII signals must be byte-aligned");
+  }
+
+  const startByte = signal.startBit / 8;
+  const lengthBytes = signal.length / 8;
+  if (lengthBytes <= 0 || startByte + lengthBytes > data.length) {
+    throw new Error(`Signal exceeds ${data.length}-byte payload bounds`);
   }
 }
 

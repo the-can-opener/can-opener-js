@@ -1,13 +1,26 @@
-import type { DiagnosticBinding, RawDbc, RawDbcAttribute, RawDbcSignal, SignalProtocol, VehicleSignal } from "./types.js";
+import type {
+  DiagnosticBinding,
+  DiagnosticTransport,
+  RawDbc,
+  RawDbcAttribute,
+  RawDbcSignal,
+  SignalProtocol,
+  SignalValueType,
+  VehicleSignal,
+} from "./types.js";
 
 export interface SignalClassifierAttributeMap {
   protocol: string;
   pid: string;
   requestCanId: string;
   responseCanId: string;
+  diagnosticServiceId: string;
   udsServiceId: string;
   udsDid: string;
   udsPayload: string;
+  diagnosticTransport: string;
+  responseLength: string;
+  valueType: string;
 }
 
 export interface SignalClassifierOptions {
@@ -20,9 +33,13 @@ const DEFAULT_ATTRIBUTE_MAP: SignalClassifierAttributeMap = {
   pid: "Pid",
   requestCanId: "RequestCanId",
   responseCanId: "ResponseCanId",
+  diagnosticServiceId: "DiagnosticServiceId",
   udsServiceId: "UdsServiceId",
   udsDid: "UdsDid",
   udsPayload: "UdsPayload",
+  diagnosticTransport: "DiagnosticTransport",
+  responseLength: "ResponseLength",
+  valueType: "SignalValueType",
 };
 
 export class SignalClassifier {
@@ -61,9 +78,13 @@ export class SignalClassifier {
     const pid = this.readNumberAttribute(attributes, this.attributeMap.pid);
     const requestCanId = this.readNumberAttribute(attributes, this.attributeMap.requestCanId);
     const responseCanId = this.readNumberAttribute(attributes, this.attributeMap.responseCanId);
-    const serviceId = this.readNumberAttribute(attributes, this.attributeMap.udsServiceId);
+    const serviceId = this.readNumberAttribute(attributes, this.attributeMap.diagnosticServiceId)
+      ?? this.readNumberAttribute(attributes, this.attributeMap.udsServiceId);
     const did = this.readNumberAttribute(attributes, this.attributeMap.udsDid);
     const payload = this.readPayloadAttribute(attributes, this.attributeMap.udsPayload);
+    const diagnosticTransport = this.readDiagnosticTransport(attributes);
+    const responseLength = this.readNumberAttribute(attributes, this.attributeMap.responseLength);
+    const valueType = this.readSignalValueType(attributes);
     const enumValues = raw.valueTables.find(
       (table) => table.messageId === rawSignal.messageId && table.signalName === rawSignal.name,
     )?.values;
@@ -79,6 +100,7 @@ export class SignalClassifier {
       scale: rawSignal.scale,
       offset: rawSignal.offset,
       ...(rawSignal.unit !== undefined ? { unit: rawSignal.unit } : {}),
+      ...(valueType !== undefined ? { valueType } : {}),
       ...(enumValues !== undefined ? { enumValues } : {}),
       ...(protocol === "pid"
         ? {
@@ -89,6 +111,8 @@ export class SignalClassifier {
               serviceId,
               did,
               payload,
+              diagnosticTransport,
+              responseLength,
             })),
           }
         : {}),
@@ -117,6 +141,8 @@ export class SignalClassifier {
       serviceId?: number;
       did?: number;
       payload?: Uint8Array;
+      diagnosticTransport?: DiagnosticTransport;
+      responseLength?: number;
     },
   ): DiagnosticBinding {
     if (metadata.payload === undefined && metadata.pid === undefined && metadata.did === undefined) {
@@ -138,7 +164,35 @@ export class SignalClassifier {
         ...(metadata.pid !== undefined ? { pid: metadata.pid } : {}),
         ...(metadata.did !== undefined ? { did: metadata.did } : {}),
       },
+      ...(metadata.diagnosticTransport !== undefined ? { transport: metadata.diagnosticTransport } : {}),
+      ...(metadata.responseLength !== undefined ? { responseLength: metadata.responseLength } : {}),
     };
+  }
+
+  private readDiagnosticTransport(attributes: RawDbcAttribute[]): DiagnosticTransport | undefined {
+    const value = this.readAttribute(attributes, this.attributeMap.diagnosticTransport);
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === "single" || value === "isotp") {
+      return value;
+    }
+
+    throw new Error(`Unsupported diagnostic transport: ${String(value)}`);
+  }
+
+  private readSignalValueType(attributes: RawDbcAttribute[]): SignalValueType | undefined {
+    const value = this.readAttribute(attributes, this.attributeMap.valueType);
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === "number" || value === "ascii" || value === "bytes") {
+      return value;
+    }
+
+    throw new Error(`Unsupported signal value type: ${String(value)}`);
   }
 
   private readNumberAttribute(attributes: RawDbcAttribute[], name: string): number | undefined {
@@ -196,6 +250,8 @@ function buildDiagnosticMetadata(input: {
   serviceId: number | undefined;
   did: number | undefined;
   payload: Uint8Array | undefined;
+  diagnosticTransport: DiagnosticTransport | undefined;
+  responseLength: number | undefined;
 }): {
   pid?: number;
   requestCanId?: number;
@@ -203,6 +259,8 @@ function buildDiagnosticMetadata(input: {
   serviceId?: number;
   did?: number;
   payload?: Uint8Array;
+  diagnosticTransport?: DiagnosticTransport;
+  responseLength?: number;
 } {
   return {
     ...(input.pid !== undefined ? { pid: input.pid } : {}),
@@ -211,5 +269,7 @@ function buildDiagnosticMetadata(input: {
     ...(input.serviceId !== undefined ? { serviceId: input.serviceId } : {}),
     ...(input.did !== undefined ? { did: input.did } : {}),
     ...(input.payload !== undefined ? { payload: input.payload } : {}),
+    ...(input.diagnosticTransport !== undefined ? { diagnosticTransport: input.diagnosticTransport } : {}),
+    ...(input.responseLength !== undefined ? { responseLength: input.responseLength } : {}),
   };
 }

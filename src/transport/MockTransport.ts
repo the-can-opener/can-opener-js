@@ -1,5 +1,5 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
-import type { CommandRequest, SubscribeRequest, VehicleTransport } from "./types.js";
+import type { CommandRequest, PidRequestContext, SubscribeRequest, VehicleTransport } from "./types.js";
 
 type FrameCallback = (frame: CanFrame) => void;
 
@@ -7,6 +7,7 @@ export class MockTransport implements VehicleTransport {
   readonly subscriptions: SubscribeRequest[] = [];
   readonly commands: CommandRequest[] = [];
   readonly pidRequests: CanFrame[] = [];
+  readonly pidRequestContexts: Array<PidRequestContext | undefined> = [];
 
   private readonly callbacks = new Set<FrameCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
@@ -21,9 +22,10 @@ export class MockTransport implements VehicleTransport {
     this.callbacks.clear();
   }
 
-  async sendPid(frame: CanFrame): Promise<CanPayload> {
+  async sendPid(frame: CanFrame, context?: PidRequestContext): Promise<CanPayload> {
     this.assertConnected();
     this.pidRequests.push(cloneFrame(frame));
+    this.pidRequestContexts.push(context === undefined ? undefined : clonePidRequestContext(context));
     const response = this.pidResponses.get(frameKey(frame));
     if (response === undefined) {
       throw new Error(`No mock PID response registered for CAN ID ${frame.canId}`);
@@ -81,6 +83,18 @@ export class MockTransport implements VehicleTransport {
       throw new Error("MockTransport is not connected");
     }
   }
+}
+
+function clonePidRequestContext(context: PidRequestContext): PidRequestContext {
+  return {
+    signalName: context.signalName,
+    diagnostic: {
+      request: { ...context.diagnostic.request },
+      response: { ...context.diagnostic.response },
+      ...(context.diagnostic.transport !== undefined ? { transport: context.diagnostic.transport } : {}),
+      ...(context.diagnostic.responseLength !== undefined ? { responseLength: context.diagnostic.responseLength } : {}),
+    },
+  };
 }
 
 function cloneFrame(frame: CanFrame): CanFrame {

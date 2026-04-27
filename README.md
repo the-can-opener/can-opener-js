@@ -57,7 +57,8 @@ await car.command("HORN", {
   bit layout, protocol metadata, and diagnostic bindings.
 - `frame` signals are decoded from incoming CAN frames, can be subscribed to,
   and can be sent as commands.
-- `pid` signals are requested on demand through `pid()`.
+- `pid` signals are requested on demand through `pid()` or polled through
+  `subscribePid()`.
 - A transport only sends and receives frames. It does not need to parse DBC
   files, know app-level signal names, or implement vehicle state.
 - Multiple vehicles can be connected at the same time. Each vehicle has isolated
@@ -75,13 +76,17 @@ BA_DEF_ SG_ "SignalProtocol" STRING;
 BA_DEF_ SG_ "Pid" INT 0 65535;
 BA_DEF_ SG_ "RequestCanId" INT 0 536870911;
 BA_DEF_ SG_ "ResponseCanId" INT 0 536870911;
-BA_DEF_ SG_ "UdsServiceId" INT 0 255;
+BA_DEF_ SG_ "DiagnosticServiceId" INT 0 255;
 BA_DEF_ SG_ "UdsDid" INT 0 65535;
+BA_DEF_ SG_ "DiagnosticTransport" STRING;
+BA_DEF_ SG_ "ResponseLength" INT 0 4095;
+BA_DEF_ SG_ "SignalValueType" STRING;
 
 BA_ "SignalProtocol" SG_ 201 VEHICLE_SPEED "pid";
 BA_ "Pid" SG_ 201 VEHICLE_SPEED 13;
 BA_ "RequestCanId" SG_ 201 VEHICLE_SPEED 200;
 BA_ "ResponseCanId" SG_ 201 VEHICLE_SPEED 201;
+BA_ "DiagnosticTransport" SG_ 201 VEHICLE_SPEED "single";
 ```
 
 Signals without `SignalProtocol` default to `frame`.
@@ -92,8 +97,18 @@ Supported signal-level attributes:
 - `Pid`: OBD-style PID number for diagnostic PID requests.
 - `RequestCanId`: CAN ID used for diagnostic requests.
 - `ResponseCanId`: CAN ID expected for diagnostic responses.
-- `UdsServiceId`: UDS service ID for UDS-style diagnostic metadata.
+- `DiagnosticServiceId`: diagnostic service/mode ID, such as OBD-II service
+  `0x01` for current data or `0x09` for vehicle information.
 - `UdsDid`: UDS data identifier.
+- `DiagnosticTransport`: `"single"` or `"isotp"`. ISO-TP means the
+  transport/device should gather a reassembled logical response before returning.
+- `ResponseLength`: expected logical response length after the response service
+  and PID/DID bytes are stripped.
+- `SignalValueType`: `"number"`, `"ascii"`, or `"bytes"` for payload decoding.
+
+The test fixtures include `tests/fixtures/obd2-pids.dbc` as a starter DBC for
+common OBD-II PIDs. It models the logical diagnostic payload, not CAN or ISO-TP
+frame bytes.
 
 ## Connecting Vehicles
 
@@ -120,10 +135,11 @@ decoding.
 
 ## Subscriptions
 
-Subscriptions are requested by signal name, but the underlying transport
+Frame subscriptions are requested by signal name, and the underlying transport
 subscription is tracked per CAN frame. If `TURN_SIGNAL_LEFT` and `HIGH_BEAMS`
 are encoded in the same CAN ID, the vehicle keeps one frame subscription and
-modifies it as signal names are added or removed.
+modifies it as signal names are added or removed. PID polling is intentionally a
+separate API.
 
 ```ts
 const unsubscribeRpm = await car.subscribe("ENGINE_RPM", {
@@ -160,6 +176,16 @@ car.state.get<number>("ENGINE_RPM"); // 900
 car.state.engine_rpm; // 900
 ```
 
+PID polling subscriptions use `subscribePid()`:
+
+```ts
+const unsubscribeSpeed = await car.subscribePid("VEHICLE_SPEED", {
+  frequencyHz: 2,
+});
+
+await unsubscribeSpeed();
+```
+
 ## PID Reads
 
 Use `pid()` for signals marked with `SignalProtocol` set to `"pid"`:
@@ -168,10 +194,16 @@ Use `pid()` for signals marked with `SignalProtocol` set to `"pid"`:
 const speed = await car.pid<number>("VEHICLE_SPEED");
 ```
 
-The DBC metadata describes the request and response CAN IDs plus the PID or UDS
-details. The transport receives a raw CAN frame through `sendPid()` and returns
-the raw response payload; the vehicle decodes that payload back into the signal
+The DBC metadata describes the request and response CAN IDs plus the diagnostic
+service and PID/DID details. The transport receives a raw CAN frame through `sendPid()` along with
+optional diagnostic context such as `DiagnosticTransport` and `ResponseLength`.
+It returns the logical response payload; the vehicle strips the response service
+and PID/DID bytes, then decodes the remaining payload back into the signal
 value.
+
+For ISO-TP responses, the DBC should still describe the reassembled payload
+structure. The transport/device is responsible for ISO-TP segmentation and
+reassembly.
 
 Calling `pid()` for a non-`pid` signal throws a protocol error.
 
@@ -227,6 +259,7 @@ import type {
   CanFrame,
   CanPayload,
   CommandRequest,
+  PidRequestContext,
   SubscribeRequest,
   VehicleTransport,
 } from "can-opener-js";
@@ -234,7 +267,10 @@ import type {
 class MyTransport implements VehicleTransport {
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
-  async sendPid(frame: CanFrame): Promise<CanPayload> {
+  async sendPid(frame: CanFrame, context?: PidRequestContext): Promise<CanPayload> {
+    if (context?.diagnostic.transport === "isotp") {
+      // Gather and return the reassembled logical diagnostic payload here.
+    }
     return new Uint8Array();
   }
   async subscribe(req: SubscribeRequest): Promise<void> {}
