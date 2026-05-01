@@ -1,17 +1,20 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
-import type { CommandRequest, PidRequestContext, SubscribeRequest, VehicleTransport } from "./types.js";
+import type { MonitorControlRequest, MonitorControlResponse, MonitorSnapshot, VehicleRequest, VehicleTransport } from "./types.js";
 
-type FrameCallback = (frame: CanFrame) => void;
+type SnapshotCallback = (snapshot: MonitorSnapshot) => void;
+
+const MAX_MONITOR_IDS = 16;
 
 export class MockTransport implements VehicleTransport {
-  readonly subscriptions: SubscribeRequest[] = [];
-  readonly commands: CommandRequest[] = [];
-  readonly pidRequests: CanFrame[] = [];
-  readonly pidRequestContexts: Array<PidRequestContext | undefined> = [];
+  readonly monitorCanIds = new Set<number>();
+  readonly requests: VehicleRequest[] = [];
+  readonly monitorUpdates: MonitorControlRequest[] = [];
 
-  private readonly callbacks = new Set<FrameCallback>();
+  private readonly callbacks = new Set<SnapshotCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
+  private readonly monitorFrames = new Map<number, CanFrame>();
   private connected = false;
+  private snapshotSequence = 0;
 
   async connect(): Promise<void> {
     this.connected = true;
@@ -20,44 +23,63 @@ export class MockTransport implements VehicleTransport {
   async disconnect(): Promise<void> {
     this.connected = false;
     this.callbacks.clear();
+    this.monitorCanIds.clear();
+    this.monitorFrames.clear();
   }
 
-  async sendPid(frame: CanFrame, context?: PidRequestContext): Promise<CanPayload> {
+  async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
     this.assertConnected();
-    this.pidRequests.push(cloneFrame(frame));
-    this.pidRequestContexts.push(context === undefined ? undefined : clonePidRequestContext(context));
-    const response = this.pidResponses.get(frameKey(frame));
+    this.requests.push(cloneRequest(req));
+    if (!req.expectCanResponse) {
+      return undefined;
+    }
+
+    const response = this.pidResponses.get(frameKey(req.txFrame));
     if (response === undefined) {
-      throw new Error(`No mock PID response registered for CAN ID ${frame.canId}`);
+      throw new Error(`No mock response registered for CAN ID ${req.txFrame.canId}`);
     }
     return response.slice();
   }
 
-  async subscribe(req: SubscribeRequest): Promise<void> {
+  async updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse> {
     this.assertConnected();
-    const kept = this.subscriptions.filter((subscription) => subscription.frame.canId !== req.frame.canId);
-    this.subscriptions.splice(0, this.subscriptions.length, ...kept);
-    this.subscriptions.push({
-      ...req,
-      signalNames: [...req.signalNames],
-      frame: cloneFrame(req.frame),
-    });
+    this.monitorUpdates.push(cloneMonitorControlRequest(req));
+
+    if (req.operation === "clear") {
+      this.monitorCanIds.clear();
+      this.monitorFrames.clear();
+      return this.monitorResponse("ok");
+    }
+
+    const invalidCanId = req.canIds.find((canId) => !isValidCanId(canId));
+    if (invalidCanId !== undefined) {
+      return this.monitorResponse("invalid_can_id");
+    }
+
+    if (req.operation === "remove") {
+      for (const canId of req.canIds) {
+        this.monitorCanIds.delete(canId);
+        this.monitorFrames.delete(canId);
+      }
+      return this.monitorResponse("ok");
+    }
+
+    const uniqueCanIds = new Set(req.canIds);
+    if (uniqueCanIds.size !== req.canIds.length || req.canIds.some((canId) => this.monitorCanIds.has(canId))) {
+      return this.monitorResponse("duplicate_id");
+    }
+
+    if (this.monitorCanIds.size + uniqueCanIds.size > MAX_MONITOR_IDS) {
+      return this.monitorResponse("monitor_full");
+    }
+
+    for (const canId of uniqueCanIds) {
+      this.monitorCanIds.add(canId);
+    }
+    return this.monitorResponse("ok");
   }
 
-  async unsubscribe(canId: number): Promise<void> {
-    const kept = this.subscriptions.filter((subscription) => subscription.frame.canId !== canId);
-    this.subscriptions.splice(0, this.subscriptions.length, ...kept);
-  }
-
-  async sendCommand(req: CommandRequest): Promise<void> {
-    this.assertConnected();
-    this.commands.push({
-      ...req,
-      frame: cloneFrame(req.frame),
-    });
-  }
-
-  onFrame(cb: FrameCallback): () => void {
+  onMonitorSnapshot(cb: SnapshotCallback): () => void {
     this.callbacks.add(cb);
     return () => {
       this.callbacks.delete(cb);
@@ -69,9 +91,11 @@ export class MockTransport implements VehicleTransport {
   }
 
   emitFrame(frame: CanFrame): void {
-    for (const callback of this.callbacks) {
-      callback(cloneFrame(frame));
+    if (!this.monitorCanIds.has(frame.canId)) {
+      return;
     }
+    this.monitorFrames.set(frame.canId, cloneFrame(frame));
+    this.emitMonitorSnapshot();
   }
 
   isConnected(): boolean {
@@ -83,25 +107,61 @@ export class MockTransport implements VehicleTransport {
       throw new Error("MockTransport is not connected");
     }
   }
-}
 
-function clonePidRequestContext(context: PidRequestContext): PidRequestContext {
-  return {
-    signalName: context.signalName,
-    diagnostic: {
-      request: { ...context.diagnostic.request },
-      response: { ...context.diagnostic.response },
-      ...(context.diagnostic.transport !== undefined ? { transport: context.diagnostic.transport } : {}),
-      ...(context.diagnostic.responseLength !== undefined ? { responseLength: context.diagnostic.responseLength } : {}),
-    },
-  };
+  private monitorResponse(status: MonitorControlResponse["status"]): MonitorControlResponse {
+    return {
+      status,
+      currentMonitorCount: this.monitorCanIds.size,
+    };
+  }
+
+  private emitMonitorSnapshot(): void {
+    const snapshot = {
+      sequence: this.snapshotSequence,
+      frames: Array.from(this.monitorFrames.values(), cloneFrame),
+    };
+    this.snapshotSequence = (this.snapshotSequence + 1) & 0xffff;
+    for (const callback of this.callbacks) {
+      callback(snapshot);
+    }
+  }
 }
 
 function cloneFrame(frame: CanFrame): CanFrame {
   return {
     canId: frame.canId,
+    ...(frame.dlc !== undefined ? { dlc: frame.dlc } : {}),
     data: frame.data.slice(),
     ...(frame.extended !== undefined ? { extended: frame.extended } : {}),
+  };
+}
+
+function cloneRequest(req: VehicleRequest): VehicleRequest {
+  return {
+    ...req,
+    txFrame: cloneFrame(req.txFrame),
+    ...(req.diagnostic !== undefined
+      ? {
+          diagnostic: {
+            request: { ...req.diagnostic.request },
+            response: { ...req.diagnostic.response },
+            ...(req.diagnostic.transport !== undefined ? { transport: req.diagnostic.transport } : {}),
+            ...(req.diagnostic.responseLength !== undefined ? { responseLength: req.diagnostic.responseLength } : {}),
+          },
+        }
+      : {}),
+    ...(req.command !== undefined ? { command: { ...req.command } } : {}),
+  };
+}
+
+function cloneMonitorControlRequest(req: MonitorControlRequest): MonitorControlRequest {
+  if (req.operation === "clear") {
+    return { operation: "clear" };
+  }
+
+  return {
+    operation: req.operation,
+    canIds: [...req.canIds],
   };
 }
 
@@ -109,4 +169,8 @@ function frameKey(frame: CanFrame): string {
   return `${frame.canId}:${Array.from(frame.data)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")}`;
+}
+
+function isValidCanId(canId: number): boolean {
+  return Number.isInteger(canId) && canId >= 0 && canId <= 0x1fffffff;
 }

@@ -14,10 +14,11 @@ export class CommandController {
 
   async send(signal: VehicleSignal, opts: CommandOptions): Promise<void> {
     const frame = this.applyMask(this.dbc.encodeSignal(signal.name, opts.value), opts);
-    await this.transport.sendCommand({
+    await this.transport.sendRequest({
       signalName: signal.name,
-      frame,
-      ...opts,
+      txFrame: frame,
+      expectCanResponse: false,
+      command: opts,
     });
 
     if (opts.frequencyHz === undefined || opts.durationMs === undefined || opts.durationMs <= 0) {
@@ -26,13 +27,14 @@ export class CommandController {
 
     const intervalMs = Math.max(1, Math.round(1000 / opts.frequencyHz));
     const interval = setInterval(() => {
-      void this.transport.sendCommand({
+      void this.transport.sendRequest({
         signalName: signal.name,
-        frame: {
+        txFrame: {
           ...frame,
           data: frame.data.slice(),
         },
-        ...opts,
+        expectCanResponse: false,
+        command: opts,
       });
     }, intervalMs);
     this.scheduled.add(interval);

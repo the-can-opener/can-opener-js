@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DbcController } from "../src/dbc/DbcController.js";
 import { DbcParser } from "../src/dbc/DbcParser.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { MockTransport } from "../src/transport/MockTransport.js";
+import { MockTransport } from "../src/transport/index.js";
 import type { DbcFile } from "../src/dbc/types.js";
 import lightsCsv from "./fixtures/lights.csv?raw";
 import nissanDbcContent from "./fixtures/nissan-sentra-2010.dbc?raw";
@@ -98,17 +98,17 @@ describe("Nissan Sentra DBC", () => {
     });
 
     try {
-      const unsubscribe = await car.subscribe({
-        HEADLIGHTS: { frequencyHz: 10 },
-        HIGH_BEAM: { frequencyHz: 10 },
-        LEFT_TURN_SIGNAL: { frequencyHz: 10 },
-        RIGHT_TURN_SIGNAL: { frequencyHz: 10 },
-        HAZARD_LIGHTS: { frequencyHz: 10 },
-        FRONT_LEFT_DOOR_OPEN: { frequencyHz: 10 },
-        FRONT_RIGHT_DOOR_OPEN: { frequencyHz: 10 },
-        REAR_LEFT_DOOR_OPEN: { frequencyHz: 10 },
-        REAR_RIGHT_DOOR_OPEN: { frequencyHz: 10 },
-      });
+      await expect(car.subscribe([
+        "HEADLIGHTS",
+        "HIGH_BEAM",
+        "LEFT_TURN_SIGNAL",
+        "RIGHT_TURN_SIGNAL",
+        "HAZARD_LIGHTS",
+        "FRONT_LEFT_DOOR_OPEN",
+        "FRONT_RIGHT_DOOR_OPEN",
+        "REAR_LEFT_DOOR_OPEN",
+        "REAR_RIGHT_DOOR_OPEN",
+      ])).resolves.toBe(true);
       const emittedFrames: StreamedFrame[] = [];
       let previousState: Record<string, unknown> | undefined;
       const stream = streamCsvFramesAtRecordedTimes(lightsCsv, transport, (frame) => {
@@ -123,21 +123,8 @@ describe("Nissan Sentra DBC", () => {
         }
       });
 
-      expect(transport.subscriptions).toHaveLength(1);
-      expect(transport.subscriptions[0]).toMatchObject({
-        signalNames: [
-          "HEADLIGHTS",
-          "HIGH_BEAM",
-          "LEFT_TURN_SIGNAL",
-          "RIGHT_TURN_SIGNAL",
-          "HAZARD_LIGHTS",
-          "FRONT_LEFT_DOOR_OPEN",
-          "FRONT_RIGHT_DOOR_OPEN",
-          "REAR_LEFT_DOOR_OPEN",
-          "REAR_RIGHT_DOOR_OPEN",
-        ],
-        frequencyHz: 10,
-      });
+      expect(Array.from(transport.monitorCanIds)).toEqual([1549]);
+      expect(car.subscriptionCount()).toBe(9);
       expect(emittedFrames).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(stream.totalDurationMs);
@@ -210,7 +197,18 @@ describe("Nissan Sentra DBC", () => {
         HAZARD_LIGHTS: 1,
       });
 
-      await unsubscribe();
+      await car.unsubscribe([
+        "HEADLIGHTS",
+        "HIGH_BEAM",
+        "LEFT_TURN_SIGNAL",
+        "RIGHT_TURN_SIGNAL",
+        "HAZARD_LIGHTS",
+        "FRONT_LEFT_DOOR_OPEN",
+        "FRONT_RIGHT_DOOR_OPEN",
+        "REAR_LEFT_DOOR_OPEN",
+        "REAR_RIGHT_DOOR_OPEN",
+      ]);
+      expect(car.subscriptionCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

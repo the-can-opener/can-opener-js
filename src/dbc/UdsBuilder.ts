@@ -9,25 +9,31 @@ export function buildPidRequest(signal: VehicleSignal): CanFrame {
   }
 
   if (request.payload !== undefined) {
+    const payload = request.payload.slice(0, 8);
     return {
       canId: request.canId,
-      data: padFrame(request.payload),
+      dlc: payload.length,
+      data: padFrame(payload),
     };
   }
 
   if (request.did !== undefined) {
     const serviceId = request.serviceId ?? 0x22;
+    const payload = Uint8Array.of(serviceId, request.did >> 8 & 0xff, request.did & 0xff);
     return {
       canId: request.canId,
-      data: padFrame(Uint8Array.of(serviceId, request.did >> 8 & 0xff, request.did & 0xff)),
+      dlc: payload.length,
+      data: padFrame(payload),
     };
   }
 
   if (request.pid !== undefined) {
     const serviceId = request.serviceId ?? DEFAULT_PID_SERVICE;
+    const payload = Uint8Array.of(serviceId, request.pid & 0xff);
     return {
       canId: request.canId,
-      data: padFrame(Uint8Array.of(serviceId, request.pid & 0xff)),
+      dlc: payload.length,
+      data: padFrame(payload),
     };
   }
 

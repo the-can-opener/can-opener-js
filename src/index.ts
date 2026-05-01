@@ -10,7 +10,5 @@ export * from "./dbc/codec.js";
 export * from "./dbc/types.js";
 export * from "./errors.js";
 export * from "./manager/VirtualVehicleManager.js";
-export * from "./transport/MockTransport.js";
-export * from "./transport/types.js";
 export * from "./vehicle/VehicleState.js";
 export * from "./vehicle/VirtualVehicle.js";

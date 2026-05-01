@@ -51,6 +51,7 @@ export interface VehicleSignalState {
 
 export interface CanFrame {
   canId: number;
+  dlc?: number;
   data: Uint8Array;
   extended?: boolean;
 }
@@ -118,19 +119,17 @@ export interface DecodedSignalValue {
   signal: VehicleSignal;
 }
 
-export interface SubscriptionOptions {
+export interface PollingOptions {
   frequencyHz?: number;
   durationMs?: number;
 }
 
-export type SubscriptionRegistry = Record<
-  string,
-  SubscriptionOptions | undefined
->;
+export interface PidSubscriptionHandle {
+  readonly id: string;
+  readonly signalName: string;
+}
 
-export interface CommandOptions extends SubscriptionOptions {
+export interface CommandOptions extends PollingOptions {
   value: unknown;
   mask?: number;
 }
-
-export type Unsubscribe = () => void | Promise<void>;

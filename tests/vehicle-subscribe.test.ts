@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isCodecSignal, writeSignalValue } from "../src/dbc/codec.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { MockTransport } from "../src/transport/MockTransport.js";
+import { MockTransport } from "../src/transport/index.js";
 import { vehicleDbc } from "./fixtures.js";
 
 describe("VirtualVehicle.subscribe", () => {
@@ -14,19 +14,15 @@ describe("VirtualVehicle.subscribe", () => {
       dbcFiles: [vehicleDbc],
     });
 
-    const unsubscribe = await car.subscribe("ENGINE_RPM", {
-      frequencyHz: 10,
-      durationMs: 30_000,
-    });
+    await expect(car.subscribe("ENGINE_RPM")).resolves.toBe(true);
     transport.emitFrame(car.dbc.encodeSignal("ENGINE_RPM", 900));
 
     expect(car.state.get<number>("ENGINE_RPM")).toBe(900);
-    expect(transport.subscriptions[0]).toMatchObject({
-      signalNames: ["ENGINE_RPM"],
-      frequencyHz: 10,
-    });
+    expect(Array.from(transport.monitorCanIds)).toEqual([100]);
+    expect(car.subscriptionCount()).toBe(1);
 
-    await unsubscribe();
+    await car.unsubscribe("ENGINE_RPM");
+    expect(car.subscriptionCount()).toBe(0);
   });
 
   it("merges keyword subscriptions that share one CAN frame", async () => {
@@ -38,18 +34,11 @@ describe("VirtualVehicle.subscribe", () => {
       dbcFiles: [vehicleDbc],
     });
 
-    const unsubscribeTurnSignal = await car.subscribe("TURN_SIGNAL_LEFT", {
-      frequencyHz: 5,
-    });
-    const unsubscribeHighBeams = await car.subscribe("HIGH_BEAMS", {
-      frequencyHz: 20,
-    });
+    await expect(car.subscribe("TURN_SIGNAL_LEFT")).resolves.toBe(true);
+    await expect(car.subscribe("HIGH_BEAMS")).resolves.toBe(true);
 
-    expect(transport.subscriptions).toHaveLength(1);
-    expect(transport.subscriptions[0]).toMatchObject({
-      signalNames: ["TURN_SIGNAL_LEFT", "HIGH_BEAMS"],
-      frequencyHz: 20,
-    });
+    expect(Array.from(transport.monitorCanIds)).toEqual([300]);
+    expect(car.subscriptionCount()).toBe(2);
 
     const frame = {
       canId: 300,
@@ -67,14 +56,15 @@ describe("VirtualVehicle.subscribe", () => {
     expect(car.state.turn_signal_left).toBe(1);
     expect(car.state.high_beams).toBe(1);
 
-    await unsubscribeTurnSignal();
+    await car.unsubscribe("TURN_SIGNAL_LEFT");
 
-    expect(transport.subscriptions).toHaveLength(1);
-    expect(transport.subscriptions[0]?.signalNames).toEqual(["HIGH_BEAMS"]);
+    expect(Array.from(transport.monitorCanIds)).toEqual([300]);
+    expect(car.subscriptionCount()).toBe(1);
 
-    await unsubscribeHighBeams();
+    await car.unsubscribe("HIGH_BEAMS");
 
-    expect(transport.subscriptions).toHaveLength(0);
+    expect(transport.monitorCanIds.size).toBe(0);
+    expect(car.subscriptionCount()).toBe(0);
   });
 
   it("declares multiple subscriptions from a registry", async () => {
@@ -86,20 +76,15 @@ describe("VirtualVehicle.subscribe", () => {
       dbcFiles: [vehicleDbc],
     });
 
-    const unsubscribe = await car.subscribe({
-      TURN_SIGNAL_LEFT: { frequencyHz: 5 },
-      HIGH_BEAMS: { frequencyHz: 20 },
-    });
+    await expect(car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"])).resolves.toBe(true);
 
-    expect(transport.subscriptions).toHaveLength(1);
-    expect(transport.subscriptions[0]).toMatchObject({
-      signalNames: ["TURN_SIGNAL_LEFT", "HIGH_BEAMS"],
-      frequencyHz: 20,
-    });
+    expect(Array.from(transport.monitorCanIds)).toEqual([300]);
+    expect(car.subscriptionCount()).toBe(2);
 
-    await unsubscribe();
+    await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 
-    expect(transport.subscriptions).toHaveLength(0);
+    expect(transport.monitorCanIds.size).toBe(0);
+    expect(car.subscriptionCount()).toBe(0);
   });
 
   it("rejects PID signals for frame subscriptions", async () => {

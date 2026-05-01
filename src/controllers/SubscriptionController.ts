@@ -1,25 +1,20 @@
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CanFrame, SubscriptionOptions, Unsubscribe, VehicleSignal, VehicleSignalState } from "../dbc/types.js";
+import type { CanFrame, VehicleSignal, VehicleSignalState } from "../dbc/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
-type Timer = ReturnType<typeof setTimeout>;
-
 interface ActiveSubscription {
   state: VehicleSignalState;
-  opts: SubscriptionOptions;
-  startedAt: number;
-  timer?: Timer;
 }
 
 interface SubscriptionRequest {
   state: VehicleSignalState;
-  opts?: SubscriptionOptions;
 }
 
 export class SubscriptionController {
   private readonly activeBySignal = new Map<string, ActiveSubscription>();
   private readonly activeByCanId = new Map<number, Map<string, ActiveSubscription>>();
+  private readonly monitoredCanIds = new Set<number>();
 
   constructor(
     private readonly state: VehicleState,
@@ -27,32 +22,21 @@ export class SubscriptionController {
     private readonly transport: VehicleTransport,
   ) {}
 
-  async add(signal: VehicleSignal, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
-    const unsubscribe = await this.addMany([{ state: { name: signal.name, signal }, opts }]);
-    return unsubscribe;
+  async add(signal: VehicleSignal): Promise<boolean> {
+    return await this.addMany([{ state: { name: signal.name, signal } }]);
   }
 
-  async addMany(requests: SubscriptionRequest[]): Promise<Unsubscribe> {
+  async addMany(requests: SubscriptionRequest[]): Promise<boolean> {
     const affectedCanIds = new Set<number>();
-    const startedAt = Date.now();
 
     for (const { state } of requests) {
       this.removeActive(state.name, affectedCanIds);
     }
 
     for (const request of requests) {
-      const opts = request.opts ?? {};
       const active: ActiveSubscription = {
         state: request.state,
-        opts,
-        startedAt,
       };
-
-      if (opts.durationMs !== undefined) {
-        active.timer = setTimeout(() => {
-          void this.cancel(request.state.name);
-        }, opts.durationMs);
-      }
 
       this.activeBySignal.set(request.state.name, active);
       this.getOrCreateFrameSubscriptions(request.state.signal.canId).set(request.state.name, active);
@@ -60,7 +44,7 @@ export class SubscriptionController {
     }
 
     await this.syncTransportSubscriptions(affectedCanIds);
-    return () => this.cancelMany(requests.map((request) => request.state.name));
+    return true;
   }
 
   handleFrame(frame: CanFrame): void {
@@ -85,8 +69,25 @@ export class SubscriptionController {
     await this.cancelMany([signalName]);
   }
 
+  async cancelMany(signalNames: readonly string[]): Promise<void> {
+    const affectedCanIds = new Set<number>();
+
+    for (const signalName of signalNames) {
+      this.removeActive(signalName, affectedCanIds);
+    }
+
+    await this.syncTransportSubscriptions(affectedCanIds);
+  }
+
+  count(): number {
+    return this.activeBySignal.size;
+  }
+
   cancelAll(): void {
-    void this.cancelMany(Array.from(this.activeBySignal.keys()));
+    this.activeBySignal.clear();
+    this.activeByCanId.clear();
+    this.monitoredCanIds.clear();
+    void this.transport.updateMonitor({ operation: "clear" });
   }
 
   private getOrCreateFrameSubscriptions(canId: number): Map<string, ActiveSubscription> {
@@ -100,24 +101,10 @@ export class SubscriptionController {
     return created;
   }
 
-  private async cancelMany(signalNames: string[]): Promise<void> {
-    const affectedCanIds = new Set<number>();
-
-    for (const signalName of signalNames) {
-      this.removeActive(signalName, affectedCanIds);
-    }
-
-    await this.syncTransportSubscriptions(affectedCanIds);
-  }
-
   private removeActive(signalName: string, affectedCanIds: Set<number>): void {
     const active = this.activeBySignal.get(signalName);
     if (active === undefined) {
       return;
-    }
-
-    if (active.timer !== undefined) {
-      clearTimeout(active.timer);
     }
 
     this.activeBySignal.delete(signalName);
@@ -140,18 +127,24 @@ export class SubscriptionController {
   private async syncTransportSubscription(canId: number): Promise<void> {
     const frameSubscriptions = this.activeByCanId.get(canId);
     if (frameSubscriptions === undefined || frameSubscriptions.size === 0) {
-      await this.transport.unsubscribe(canId);
+      if (this.monitoredCanIds.has(canId)) {
+        await this.applyMonitorUpdate({ operation: "remove", canIds: [canId] });
+        this.monitoredCanIds.delete(canId);
+      }
       return;
     }
 
-    await this.transport.subscribe({
-      signalNames: Array.from(frameSubscriptions.keys()),
-      frame: {
-        canId,
-        data: new Uint8Array(8),
-      },
-      ...mergeSubscriptionOptions(Array.from(frameSubscriptions.values())),
-    });
+    if (!this.monitoredCanIds.has(canId)) {
+      await this.applyMonitorUpdate({ operation: "add", canIds: [canId] });
+      this.monitoredCanIds.add(canId);
+    }
+  }
+
+  private async applyMonitorUpdate(req: Parameters<VehicleTransport["updateMonitor"]>[0]): Promise<void> {
+    const response = await this.transport.updateMonitor(req);
+    if (response.status !== "ok") {
+      throw new Error(`Monitor ${req.operation} failed with status ${response.status}`);
+    }
   }
 }
 
@@ -161,29 +154,4 @@ function decodeSubscriptionStateValue(state: VehicleSignalState, value: unknown)
   }
 
   return value === state.enumValue ? 1 : 0;
-}
-
-function mergeSubscriptionOptions(active: ActiveSubscription[]): SubscriptionOptions {
-  const frequencyHz = active.reduce<number | undefined>((max, subscription) => {
-    if (subscription.opts.frequencyHz === undefined) {
-      return max;
-    }
-    return max === undefined ? subscription.opts.frequencyHz : Math.max(max, subscription.opts.frequencyHz);
-  }, undefined);
-
-  const remainingDurations = active.map((subscription) => {
-    if (subscription.opts.durationMs === undefined) {
-      return undefined;
-    }
-    return Math.max(0, subscription.opts.durationMs - (Date.now() - subscription.startedAt));
-  });
-  const allFiniteDuration = remainingDurations.every((duration) => duration !== undefined);
-  const durationMs = allFiniteDuration
-    ? Math.max(...remainingDurations.map((duration) => duration ?? 0))
-    : undefined;
-
-  return {
-    ...(frequencyHz !== undefined ? { frequencyHz } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
-  };
 }

@@ -2,7 +2,13 @@ import { CommandController } from "../controllers/CommandController.js";
 import { PidController } from "../controllers/PidController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CommandOptions, DbcFile, SubscriptionOptions, SubscriptionRegistry, Unsubscribe, VehicleSignalState } from "../dbc/types.js";
+import type {
+  CommandOptions,
+  DbcFile,
+  PidSubscriptionHandle,
+  PollingOptions,
+  VehicleSignalState,
+} from "../dbc/types.js";
 import { SignalProtocolError } from "../errors.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
@@ -16,7 +22,6 @@ export interface VirtualVehicleInternals {
 
 interface ResolvedSubscriptionRequest {
   state: VehicleSignalState;
-  opts: SubscriptionOptions;
 }
 
 export class VirtualVehicle {
@@ -37,11 +42,11 @@ export class VirtualVehicle {
     return await this.internals.pids.request(signal) as T;
   }
 
-  async subscribe(signalName: string, opts?: SubscriptionOptions): Promise<Unsubscribe>;
-  async subscribe(subscriptions: SubscriptionRegistry): Promise<Unsubscribe>;
-  async subscribe(signalNameOrSubscriptions: string | SubscriptionRegistry, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
+  async subscribe(signalName: string): Promise<boolean>;
+  async subscribe(signalNames: readonly string[]): Promise<boolean>;
+  async subscribe(signalNameOrSubscriptions: string | readonly string[]): Promise<boolean> {
     if (typeof signalNameOrSubscriptions !== "string") {
-      const requests: ResolvedSubscriptionRequest[] = Object.entries(signalNameOrSubscriptions).map(([signalName, subscriptionOptions]) => {
+      const requests: ResolvedSubscriptionRequest[] = signalNameOrSubscriptions.map((signalName) => {
         const state = this.dbc.resolveState(signalName);
         if (state.signal.protocol !== "frame") {
           throw new SignalProtocolError(signalName, "frame", state.signal.protocol);
@@ -49,7 +54,6 @@ export class VirtualVehicle {
 
         return {
           state,
-          opts: subscriptionOptions ?? {},
         };
       });
 
@@ -62,16 +66,35 @@ export class VirtualVehicle {
       throw new SignalProtocolError(signalName, "frame", state.signal.protocol);
     }
 
-    return await this.internals.subscriptions.addMany([{ state, opts }]);
+    return await this.internals.subscriptions.addMany([{ state }]);
   }
 
-  async subscribePid(signalName: string, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
+  async unsubscribe(signalName: string): Promise<void>;
+  async unsubscribe(signalNames: readonly string[]): Promise<void>;
+  async unsubscribe(signalNameOrSubscriptions: string | readonly string[]): Promise<void> {
+    if (typeof signalNameOrSubscriptions !== "string") {
+      await this.internals.subscriptions.cancelMany(signalNameOrSubscriptions);
+      return;
+    }
+
+    await this.internals.subscriptions.cancel(signalNameOrSubscriptions);
+  }
+
+  subscriptionCount(): number {
+    return this.internals.subscriptions.count();
+  }
+
+  async subscribePid(signalName: string, opts: PollingOptions = {}): Promise<PidSubscriptionHandle> {
     const signal = this.dbc.resolve(signalName);
     if (signal.protocol !== "pid") {
       throw new SignalProtocolError(signalName, "PID", signal.protocol);
     }
 
     return await this.internals.pids.subscribe(signal, opts);
+  }
+
+  unsubscribePid(handle: PidSubscriptionHandle): void {
+    this.internals.pids.cancelHandle(handle);
   }
 
   async command(signalName: string, opts: CommandOptions): Promise<void> {

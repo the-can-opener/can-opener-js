@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildPidRequest } from "../src/dbc/UdsBuilder.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { MockTransport } from "../src/transport/MockTransport.js";
+import { MockTransport } from "../src/transport/index.js";
 import { obd2PidDbc, vehicleDbc } from "./fixtures.js";
 
 describe("VirtualVehicle.pid", () => {
@@ -19,7 +19,11 @@ describe("VirtualVehicle.pid", () => {
 
     await expect(car.pid<number>("VEHICLE_SPEED")).resolves.toBe(88);
     expect(car.state.get<number>("VEHICLE_SPEED")).toBe(88);
-    expect(transport.pidRequests).toHaveLength(1);
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]).toMatchObject({
+      signalName: "VEHICLE_SPEED",
+      expectCanResponse: true,
+    });
   });
 
   it("passes diagnostic transport metadata to PID transports", async () => {
@@ -37,7 +41,7 @@ describe("VirtualVehicle.pid", () => {
 
     await expect(car.pid<string>("VIN")).resolves.toBe("1HGCM82633A004352");
     expect(car.state.get<string>("VIN")).toBe("1HGCM82633A004352");
-    expect(transport.pidRequestContexts[0]).toMatchObject({
+    expect(transport.requests[0]).toMatchObject({
       signalName: "VIN",
       diagnostic: {
         transport: "isotp",
@@ -59,22 +63,56 @@ describe("VirtualVehicle.pid", () => {
       const signal = car.dbc.resolve("VEHICLE_SPEED");
       transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
 
-      const unsubscribe = await car.subscribePid("VEHICLE_SPEED", {
+      const subscription = await car.subscribePid("VEHICLE_SPEED", {
         frequencyHz: 2,
       });
       await vi.advanceTimersByTimeAsync(0);
 
       expect(car.state.get<number>("VEHICLE_SPEED")).toBe(88);
-      expect(transport.pidRequests).toHaveLength(1);
+      expect(transport.requests).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(transport.pidRequests).toHaveLength(2);
+      expect(transport.requests).toHaveLength(2);
 
-      await unsubscribe();
+      car.unsubscribePid(subscription);
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(transport.pidRequests).toHaveLength(2);
+      expect(transport.requests).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores stale PID subscription handles", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new VirtualVehicleManager();
+      const transport = new MockTransport();
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        dbcFiles: [vehicleDbc],
+      });
+      const signal = car.dbc.resolve("VEHICLE_SPEED");
+      transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
+
+      const staleSubscription = await car.subscribePid("VEHICLE_SPEED", {
+        frequencyHz: 2,
+      });
+      const activeSubscription = await car.subscribePid("VEHICLE_SPEED", {
+        frequencyHz: 2,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(staleSubscription).not.toEqual(activeSubscription);
+
+      car.unsubscribePid(staleSubscription);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(transport.requests).toHaveLength(3);
+
+      car.unsubscribePid(activeSubscription);
     } finally {
       vi.useRealTimers();
     }

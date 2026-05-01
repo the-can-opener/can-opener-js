@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { MockTransport } from "../src/transport/MockTransport.js";
+import { MockTransport } from "../src/transport/index.js";
 import { vehicleDbc } from "./fixtures.js";
 
 describe("VirtualVehicle.command", () => {
@@ -18,8 +18,11 @@ describe("VirtualVehicle.command", () => {
       mask: 0b00000001,
     });
 
-    expect(transport.commands).toHaveLength(1);
-    expect(transport.commands[0]?.signalName).toBe("HORN");
-    expect(transport.commands[0]?.frame.data[0]).toBe(1);
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]).toMatchObject({
+      signalName: "HORN",
+      expectCanResponse: false,
+    });
+    expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
   });
 });

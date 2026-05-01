@@ -1,26 +1,49 @@
-import type { CanFrame, CanPayload, CommandOptions, DiagnosticBinding, SubscriptionOptions } from "../dbc/types.js";
+import type { CanFrame, CanPayload, CommandOptions, DiagnosticBinding } from "../dbc/types.js";
 
-export interface SubscribeRequest extends SubscriptionOptions {
-  signalNames: string[];
-  frame: CanFrame;
+export type MonitorControlStatus =
+  | "ok"
+  | "invalid_opcode"
+  | "invalid_length"
+  | "monitor_full"
+  | "duplicate_id"
+  | "invalid_can_id"
+  | "internal_error";
+
+export type MonitorControlRequest =
+  | {
+      operation: "add" | "remove";
+      canIds: readonly number[];
+    }
+  | {
+      operation: "clear";
+    };
+
+export interface MonitorControlResponse {
+  status: MonitorControlStatus;
+  currentMonitorCount: number;
 }
 
-export interface CommandRequest extends CommandOptions {
-  signalName: string;
-  frame: CanFrame;
+export interface MonitorSnapshot {
+  sequence: number;
+  frames: readonly CanFrame[];
 }
 
-export interface PidRequestContext {
-  signalName: string;
-  diagnostic: DiagnosticBinding;
+export interface VehicleRequest {
+  signalName?: string;
+  txFrame: CanFrame;
+  expectCanResponse: boolean;
+  notifyTxStatus?: boolean;
+  responseIdStart?: number;
+  responseIdEnd?: number;
+  timeoutMs?: number;
+  diagnostic?: DiagnosticBinding;
+  command?: CommandOptions;
 }
 
 export interface VehicleTransport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  sendPid(frame: CanFrame, context?: PidRequestContext): Promise<CanPayload>;
-  subscribe(req: SubscribeRequest): Promise<void>;
-  unsubscribe(canId: number): Promise<void>;
-  sendCommand(req: CommandRequest): Promise<void>;
-  onFrame(cb: (frame: CanFrame) => void): () => void;
+  sendRequest(req: VehicleRequest): Promise<CanPayload | undefined>;
+  updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse>;
+  onMonitorSnapshot(cb: (snapshot: MonitorSnapshot) => void): () => void;
 }

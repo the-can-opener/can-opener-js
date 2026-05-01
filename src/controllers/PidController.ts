@@ -1,12 +1,13 @@
 import { buildPidRequest, decodePidResponse } from "../dbc/UdsBuilder.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { SubscriptionOptions, Unsubscribe, VehicleSignal } from "../dbc/types.js";
+import type { PidSubscriptionHandle, PollingOptions, VehicleSignal } from "../dbc/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
 type Timer = ReturnType<typeof setTimeout>;
 
 interface ActivePidSubscription {
+  handle: PidSubscriptionHandle;
   signal: VehicleSignal;
   interval: Timer;
   durationTimer?: Timer;
@@ -18,6 +19,7 @@ const DEFAULT_PID_SUBSCRIPTION_FREQUENCY_HZ = 1;
 export class PidController {
   private readonly pending = new Set<Promise<unknown>>();
   private readonly activeBySignal = new Map<string, ActivePidSubscription>();
+  private nextSubscriptionId = 1;
 
   constructor(
     private readonly state: VehicleState,
@@ -27,15 +29,22 @@ export class PidController {
 
   async request(signal: VehicleSignal): Promise<unknown> {
     const frame = buildPidRequest(signal);
-    const promise = this.transport.sendPid(
-      frame,
-      signal.diagnostic === undefined
-        ? undefined
-        : {
-            signalName: signal.name,
-            diagnostic: signal.diagnostic,
-          },
-    ).then((payload) => {
+    const responseCanId = signal.diagnostic?.response.canId;
+    const promise = this.transport.sendRequest({
+      signalName: signal.name,
+      txFrame: frame,
+      expectCanResponse: true,
+      ...(responseCanId !== undefined
+        ? {
+            responseIdStart: responseCanId,
+            responseIdEnd: responseCanId,
+          }
+        : {}),
+      ...(signal.diagnostic !== undefined ? { diagnostic: signal.diagnostic } : {}),
+    }).then((payload) => {
+      if (payload === undefined) {
+        throw new Error(`No response payload returned for PID signal ${signal.name}`);
+      }
       const decodedPayload = decodePidResponse(signal, payload);
       const value = this.dbc.decodeSignal(signal.name, decodedPayload);
       this.state.update(signal.name, value);
@@ -50,7 +59,7 @@ export class PidController {
     }
   }
 
-  async subscribe(signal: VehicleSignal, opts: SubscriptionOptions = {}): Promise<Unsubscribe> {
+  async subscribe(signal: VehicleSignal, opts: PollingOptions = {}): Promise<PidSubscriptionHandle> {
     this.cancel(signal.name);
 
     const frequencyHz = opts.frequencyHz ?? DEFAULT_PID_SUBSCRIPTION_FREQUENCY_HZ;
@@ -58,7 +67,12 @@ export class PidController {
       throw new Error(`PID subscription frequency must be greater than 0, received ${frequencyHz}`);
     }
 
+    const handle: PidSubscriptionHandle = {
+      id: String(this.nextSubscriptionId++),
+      signalName: signal.name,
+    };
     const active: ActivePidSubscription = {
+      handle,
       signal,
       interval: setInterval(() => {
         this.poll(active);
@@ -74,9 +88,7 @@ export class PidController {
     this.activeBySignal.set(signal.name, active);
     this.poll(active);
 
-    return () => {
-      this.cancel(signal.name);
-    };
+    return handle;
   }
 
   clearPending(): void {
@@ -94,6 +106,15 @@ export class PidController {
       clearTimeout(active.durationTimer);
     }
     this.activeBySignal.delete(signalName);
+  }
+
+  cancelHandle(handle: PidSubscriptionHandle): void {
+    const active = this.activeBySignal.get(handle.signalName);
+    if (active === undefined || active.handle.id !== handle.id) {
+      return;
+    }
+
+    this.cancel(handle.signalName);
   }
 
   cancelAllSubscriptions(): void {

@@ -18,7 +18,8 @@ npm install can-opener-js
 ## Quick Start
 
 ```ts
-import { MockTransport, VirtualVehicleManager } from "can-opener-js";
+import { VirtualVehicleManager } from "can-opener-js";
+import { MockTransport } from "can-opener-js/transport";
 
 const vv = new VirtualVehicleManager();
 const car = await vv.connect({
@@ -27,17 +28,12 @@ const car = await vv.connect({
   dbcFiles: [powertrainDbc, bodyDbc],
 });
 
-// Subscribe to one signal.
-await car.subscribe("ENGINE_RPM", {
-  frequencyHz: 10,
-  durationMs: 30_000,
-});
+// Subscribe to one signal. Firmware owns the streaming cadence.
+const rpmSubscribed = await car.subscribe("ENGINE_RPM"); // true
 
-// Or declare a registry of subscriptions at once.
-await car.subscribe({
-  TURN_SIGNAL_LEFT: { frequencyHz: 5 },
-  HIGH_BEAMS: { frequencyHz: 20 },
-});
+// Or subscribe to related signals at once.
+const bodySubscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]); // true
+const activeSubscriptions = car.subscriptionCount();
 
 const speed = await car.pid("VEHICLE_SPEED");
 const rpm = car.state.engine_rpm;
@@ -49,6 +45,9 @@ await car.command("HORN", {
   durationMs: 1000,
   mask: 0b00000001,
 });
+
+await car.unsubscribe("ENGINE_RPM");
+await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 ```
 
 ## Core Ideas
@@ -151,29 +150,27 @@ decoding.
 ## Subscriptions
 
 Frame subscriptions are requested by signal name, and the underlying transport
-subscription is tracked per CAN frame. If `TURN_SIGNAL_LEFT` and `HIGH_BEAMS`
-are encoded in the same CAN ID, the vehicle keeps one frame subscription and
-modifies it as signal names are added or removed. PID polling is intentionally a
-separate API.
+subscription is tracked per CAN frame. Firmware owns the streaming cadence, so
+`subscribe()` returns `true` once the firmware monitor list has accepted the
+request. Frame subscriptions stay open until `unsubscribe()` is called.
+If `TURN_SIGNAL_LEFT` and `HIGH_BEAMS` are encoded in the same CAN ID, the
+vehicle keeps one frame subscription and modifies it as signal names are added
+or removed. PID polling is intentionally a separate API.
 
 ```ts
-const unsubscribeRpm = await car.subscribe("ENGINE_RPM", {
-  frequencyHz: 10,
-  durationMs: 30_000,
-});
+const subscribed = await car.subscribe("ENGINE_RPM"); // true
+const activeCount = car.subscriptionCount(); // 1
 
-await unsubscribeRpm();
+await car.unsubscribe("ENGINE_RPM");
 ```
 
-You can also declare related subscriptions as a registry:
+You can also declare related subscriptions together:
 
 ```ts
-const unsubscribeBody = await car.subscribe({
-  TURN_SIGNAL_LEFT: { frequencyHz: 5 },
-  HIGH_BEAMS: { frequencyHz: 20 },
-});
+const subscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]); // true
+const activeCount = car.subscriptionCount(); // 2
 
-await unsubscribeBody();
+await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 ```
 
 Subscriptions may target either a physical DBC signal name or a normalized
@@ -183,10 +180,8 @@ enum-state name defined in a signal's `VAL_` table. For example, subscribing to
 enum value; otherwise it updates to `0`.
 
 When multiple signals share a CAN frame, the transport receives one merged
-subscription request. `frequencyHz` uses the highest active frequency for that
-frame. `durationMs` is preserved only when every active signal on that frame has
-a finite duration; otherwise the frame subscription stays open until explicitly
-unsubscribed.
+subscription request for that frame. Removing the last active signal for a CAN
+frame unsubscribes the transport from that frame.
 
 Incoming frames update `car.state` only for actively subscribed signals:
 
@@ -197,14 +192,15 @@ car.state.get<number>("ENGINE_RPM"); // 900
 car.state.engine_rpm; // 900
 ```
 
-PID polling subscriptions use `subscribePid()`:
+PID polling subscriptions use `subscribePid()`, which returns a handle that can
+be passed to `unsubscribePid()` later:
 
 ```ts
-const unsubscribeSpeed = await car.subscribePid("VEHICLE_SPEED", {
+const speedSubscription = await car.subscribePid("VEHICLE_SPEED", {
   frequencyHz: 2,
 });
 
-await unsubscribeSpeed();
+car.unsubscribePid(speedSubscription);
 ```
 
 ## PID Reads
@@ -216,11 +212,11 @@ const speed = await car.pid<number>("VEHICLE_SPEED");
 ```
 
 The DBC metadata describes the request and response CAN IDs plus the diagnostic
-service and PID/DID details. The transport receives a raw CAN frame through `sendPid()` along with
-optional diagnostic context such as `DiagnosticTransport` and `ResponseLength`.
-It returns the logical response payload; the vehicle strips the response service
-and PID/DID bytes, then decodes the remaining payload back into the signal
-value.
+service and PID/DID details. The transport receives a raw request frame through
+`sendRequest()` with `expectCanResponse: true` and optional diagnostic context
+such as `DiagnosticTransport` and `ResponseLength`. It returns the logical
+response payload; the vehicle strips the response service and PID/DID bytes,
+then decodes the remaining payload back into the signal value.
 
 For ISO-TP responses, the DBC should still describe the reassembled payload
 structure. The transport/device is responsible for ISO-TP segmentation and
@@ -233,17 +229,11 @@ Calling `pid()` for a non-`pid` signal throws a protocol error.
 Use `command()` to send a DBC-encoded frame signal:
 
 ```ts
-await car.command("HORN", {
-  value: true,
-  frequencyHz: 2,
-  durationMs: 1000,
-  mask: 0b00000001,
-});
+await car.command("HORN");
 ```
 
-Commands are frame-based. The command controller encodes the signal value into a
-CAN frame, applies optional masks, and passes the request to the transport with
-the original signal name and scheduling options.
+Commands are frame-based. The command controller encodes the signal into a CAN
+frame and passes the request to the transport with the original signal name.
 
 ## Vehicle State
 
@@ -270,43 +260,58 @@ or snake_case variants by converting them to upper snake case.
 The core transport is intentionally dumb:
 
 - it connects and disconnects;
-- it sends raw PID and command frames;
-- it registers raw incoming CAN frames for subscriptions;
+- it sends raw CAN requests through one request path;
+- it configures the firmware monitor list for subscriptions;
+- it receives monitor snapshots containing the latest raw CAN frames;
 - it does not parse DBC, ISO-TP, UDS, or app-level signal names.
 
 `MockTransport` ships with the library for tests and local simulations. Real BLE
-transports can implement `VehicleTransport` later.
+transports can implement `VehicleTransport` by mapping these methods onto the
+firmware characteristics:
+
+- `sendRequest()` maps to the Request characteristic. Commands use
+  `expectCanResponse: false`; PID and diagnostic reads use
+  `expectCanResponse: true`.
+- `updateMonitor()` maps to the Monitor Control characteristic with `add`,
+  `remove`, and `clear` operations.
+- `onMonitorSnapshot()` maps to Monitor Data notifications. Each snapshot
+  contains the current monitored frame set, with CAN ID, DLC, and up to 8 data
+  bytes per frame.
 
 ```ts
 import type {
-  CanFrame,
   CanPayload,
-  CommandRequest,
-  PidRequestContext,
-  SubscribeRequest,
+  MonitorControlRequest,
+  MonitorControlResponse,
+  MonitorSnapshot,
+  VehicleRequest,
   VehicleTransport,
-} from "can-opener-js";
+} from "can-opener-js/transport";
 
 class MyTransport implements VehicleTransport {
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
-  async sendPid(frame: CanFrame, context?: PidRequestContext): Promise<CanPayload> {
-    if (context?.diagnostic.transport === "isotp") {
+  async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
+    if (!req.expectCanResponse) {
+      return undefined;
+    }
+    if (req.diagnostic?.transport === "isotp") {
       // Gather and return the reassembled logical diagnostic payload here.
     }
     return new Uint8Array();
   }
-  async subscribe(req: SubscribeRequest): Promise<void> {}
-  async unsubscribe(canId: number): Promise<void> {}
-  async sendCommand(req: CommandRequest): Promise<void> {}
-  onFrame(cb: (frame: CanFrame) => void): () => void {
+  async updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse> {
+    return { status: "ok", currentMonitorCount: 0 };
+  }
+  onMonitorSnapshot(cb: (snapshot: MonitorSnapshot) => void): () => void {
     return () => {};
   }
 }
 ```
 
-`onFrame()` should register a callback for incoming CAN frames and return a
-dispose function. The vehicle calls that dispose function when disconnected.
+`onMonitorSnapshot()` should register a callback for monitor data notifications
+and return a dispose function. The vehicle calls that dispose function when
+disconnected.
 
 ## Multiple vehicles
 

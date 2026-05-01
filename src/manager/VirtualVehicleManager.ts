@@ -33,8 +33,10 @@ export class VirtualVehicleManager {
 
     await options.transport.connect();
 
-    const disposeFrames = options.transport.onFrame((frame) => {
-      subscriptions.handleFrame(frame);
+    const disposeFrames = options.transport.onMonitorSnapshot((snapshot) => {
+      for (const frame of snapshot.frames) {
+        subscriptions.handleFrame(frame);
+      }
     });
 
     const vehicle = new VirtualVehicle(options.id, state, dbc, options.transport, {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { MockTransport } from "../src/transport/MockTransport.js";
+import { MockTransport } from "../src/transport/index.js";
 import { vehicleDbc } from "./fixtures.js";
 
 describe("VirtualVehicleManager", () => {
@@ -48,5 +48,6 @@ describe("VirtualVehicleManager", () => {
 
     expect(vehicle.state.get<number>("ENGINE_RPM")).toBeUndefined();
     expect(vehicle.dbc.resolve("ENGINE_RPM").protocol).toBe("frame");
+    expect(vehicle.subscriptionCount()).toBe(0);
   });
 });
