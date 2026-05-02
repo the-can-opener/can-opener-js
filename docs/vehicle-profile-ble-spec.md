@@ -569,15 +569,14 @@ without schema negotiation.
 [0]      seq
 [1]      flags
            bit0 = expect_can_response
-           bit1 = notify_tx_status
-           bit2..7 reserved
+           bit1..7 reserved
 [2..5]   tx_can_id
 [6]      dlc 0-8
 [7..14]  payload[8]
 ```
 
-For request-only commands, `expect_can_response` is clear. If
-`notify_tx_status` is also clear, firmware does not notify a response.
+For request-only commands, `expect_can_response` is clear. Firmware transmits
+the CAN frame and does not send a BLE notification.
 
 ### Request With Response
 
@@ -585,8 +584,7 @@ For request-only commands, `expect_can_response` is clear. If
 [0]       seq
 [1]       flags
             bit0 = expect_can_response
-            bit1 = notify_tx_status
-            bit2..7 reserved
+            bit1..7 reserved
 [2..5]    tx_can_id
 [6..9]    response_id_start
 [10..13]  response_id_end
@@ -596,7 +594,10 @@ For request-only commands, `expect_can_response` is clear. If
 ```
 
 For request/response reads, `expect_can_response` is set. The response ID range
-is inclusive.
+is inclusive. Firmware always sends one BLE notification for the request. A
+successful CAN response also confirms that the transmit path succeeded well
+enough for the ECU to answer; failures are reported through the response
+`status`.
 
 ### Request Notify Response
 
