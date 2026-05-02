@@ -150,7 +150,7 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
           },
         }
       : {}),
-    ...(req.command !== undefined ? { command: { ...req.command } } : {}),
+    ...(req.action !== undefined ? { action: { ...req.action } } : {}),
   };
 }
 

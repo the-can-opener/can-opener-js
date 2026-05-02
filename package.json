@@ -36,7 +36,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "valtio": "^2.2.0"
+    "valtio": "^2.2.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DbcParser } from "../src/dbc/DbcParser.js";
-import { vehicleDbc } from "./fixtures.js";
+import { testVehicleDbc } from "./fixtures.js";
 
 describe("DbcParser", () => {
   it("parses messages, signals, attributes, and value tables", () => {
-    const parsed = new DbcParser().parse(vehicleDbc);
+    const parsed = new DbcParser().parse(testVehicleDbc);
 
     expect(parsed.messages).toHaveLength(4);
     expect(parsed.messages[0]?.signals[0]).toMatchObject({

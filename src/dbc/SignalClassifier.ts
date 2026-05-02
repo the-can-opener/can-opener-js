@@ -88,11 +88,13 @@ export class SignalClassifier {
     const enumValues = raw.valueTables.find(
       (table) => table.messageId === rawSignal.messageId && table.signalName === rawSignal.name,
     )?.values;
+    const messageName = raw.messages.find((message) => message.id === rawSignal.messageId)?.name;
 
     return {
       name: rawSignal.name,
       protocol,
       canId: responseCanId ?? rawSignal.messageId,
+      ...(messageName !== undefined ? { messageName } : {}),
       startBit: rawSignal.startBit,
       length: rawSignal.length,
       byteOrder: rawSignal.byteOrder,
@@ -125,7 +127,7 @@ export class SignalClassifier {
       return this.defaultProtocol;
     }
 
-    if (value === "frame" || value === "pid") {
+    if (value === "frame" || value === "pid" || value === "query") {
       return value;
     }
 

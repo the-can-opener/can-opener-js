@@ -3,14 +3,10 @@ import { DbcController } from "../src/dbc/DbcController.js";
 import { DbcParser } from "../src/dbc/DbcParser.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import type { DbcFile } from "../src/dbc/types.js";
+import { nissanSentraDbc, nissanSentraProfile } from "./fixtures.js";
 import lightsCsv from "./fixtures/lights.csv?raw";
-import nissanDbcContent from "./fixtures/nissan-sentra-2010.dbc?raw";
 
-const nissanDbc: DbcFile = {
-  name: "nissan-sentra-2010.dbc",
-  content: nissanDbcContent,
-};
+const nissanDbc = nissanSentraDbc;
 
 describe("Nissan Sentra DBC", () => {
   it("parses steering and lights messages from the uploaded DBC", () => {
@@ -85,6 +81,28 @@ describe("Nissan Sentra DBC", () => {
     ]);
   });
 
+  it("loads the paired Nissan profile with its DBC monitor signals", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "sentra",
+      transport,
+      profiles: [nissanSentraProfile],
+    });
+
+    await expect(car.subscribe(["HEADLIGHTS", "TurnSignalTick", "FRONT_LEFT_DOOR_OPEN"])).resolves.toBe(true);
+    expect(Array.from(transport.monitorCanIds)).toEqual([1549]);
+
+    transport.emitFrame({
+      canId: 1549,
+      data: Uint8Array.of(0b0100_1100, 0b0010_1000, 0, 0, 0, 0, 0, 0),
+    });
+
+    expect(car.state.get<number>("HEADLIGHTS")).toBe(2);
+    expect(car.state.get<number>("TurnSignalTick")).toBe(1);
+    expect(car.state.get<number>("FRONT_LEFT_DOOR_OPEN")).toBe(1);
+  });
+
   it("streams captured lights CSV frames at recorded timestamps into vehicle state", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -94,7 +112,7 @@ describe("Nissan Sentra DBC", () => {
     const car = await manager.connect({
       id: "sentra",
       transport,
-      dbcFiles: [nissanDbc],
+      dbcFiles: nissanSentraProfile.dbcFiles,
     });
 
     try {

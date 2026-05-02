@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isCodecSignal, writeSignalValue } from "../src/dbc/codec.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import { vehicleDbc } from "./fixtures.js";
+import { testVehicleProfile } from "./fixtures.js";
 
 describe("VirtualVehicle.subscribe", () => {
   it("decodes incoming frames into vehicle state", async () => {
@@ -11,7 +11,7 @@ describe("VirtualVehicle.subscribe", () => {
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
     await expect(car.subscribe("ENGINE_RPM")).resolves.toBe(true);
@@ -31,7 +31,7 @@ describe("VirtualVehicle.subscribe", () => {
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
     await expect(car.subscribe("TURN_SIGNAL_LEFT")).resolves.toBe(true);
@@ -73,7 +73,7 @@ describe("VirtualVehicle.subscribe", () => {
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
     await expect(car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"])).resolves.toBe(true);
@@ -93,11 +93,9 @@ describe("VirtualVehicle.subscribe", () => {
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
-    await expect(car.subscribe("VEHICLE_SPEED")).rejects.toThrow(
-      "VEHICLE_SPEED is not a frame signal (actual protocol: pid)",
-    );
+    await expect(car.subscribe("VEHICLE_SPEED")).rejects.toThrow("Unknown vehicle signal: VEHICLE_SPEED");
   });
 });

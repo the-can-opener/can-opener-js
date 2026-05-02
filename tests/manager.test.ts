@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import { vehicleDbc } from "./fixtures.js";
+import { testVehicleProfile } from "./fixtures.js";
 
 describe("VirtualVehicleManager", () => {
   it("isolates state and DBC bindings across vehicles", async () => {
@@ -11,12 +11,12 @@ describe("VirtualVehicleManager", () => {
     const vehicleA = await manager.connect({
       id: "car-a",
       transport: transportA,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
     const vehicleB = await manager.connect({
       id: "car-b",
       transport: transportB,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
     await vehicleA.subscribe("ENGINE_RPM");
@@ -38,13 +38,13 @@ describe("VirtualVehicleManager", () => {
     const vehicle = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
     await vehicle.subscribe("ENGINE_RPM");
     transport.emitFrame(vehicle.dbc.encodeSignal("ENGINE_RPM", 1000));
 
-    vehicle.reloadDbc([vehicleDbc]);
+    vehicle.reloadDbc(testVehicleProfile.dbcFiles);
 
     expect(vehicle.state.get<number>("ENGINE_RPM")).toBeUndefined();
     expect(vehicle.dbc.resolve("ENGINE_RPM").protocol).toBe("frame");

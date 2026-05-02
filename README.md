@@ -2,7 +2,7 @@
 
 React-style vehicle state for cars. `can-opener-js` gives TypeScript apps a
 virtual vehicle object that monitors the state of a car through named signals and
-uses common commands to control that state, without forcing the app to speak raw
+uses named actions to control that state, without forcing the app to speak raw
 CAN. It abstracts DBC files, CAN IDs, byte order, scaling, masks, and bit-level
 signal packing behind named vehicle state.
 
@@ -14,7 +14,7 @@ portable: the same code can run across different cars by swapping the DBC files
 and transport.
 
 It turns signal names like `ENGINE_RPM`, `TURN_SIGNAL_LEFT`, and
-`VEHICLE_SPEED` into DBC-aware state reads, subscriptions, and commands while
+`VEHICLE_SPEED` into DBC-aware state reads, subscriptions, queries, and actions while
 leaving real CAN, BLE, firmware, and ISO-TP details to the transport layer.
 
 ## Install
@@ -33,7 +33,7 @@ const vv = new VirtualVehicleManager();
 const car = await vv.connect({
   id: "tesla-1",
   transport: new MockTransport(),
-  dbcFiles: [powertrainDbc, bodyDbc],
+  profiles: [vehicleProfile],
 });
 
 // Subscribe to one signal. Firmware owns the streaming cadence.
@@ -47,12 +47,7 @@ const speed = await car.query("VEHICLE_SPEED");
 const rpm = car.state.engine_rpm;
 const alsoRpm = car.state.get<number>("ENGINE_RPM");
 
-await car.command("HORN", {
-  value: true,
-  frequencyHz: 2,
-  durationMs: 1000,
-  mask: 0b00000001,
-});
+await car.action("HORN");
 
 await car.unsubscribe("ENGINE_RPM");
 await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
@@ -61,11 +56,10 @@ await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 ## Core Ideas
 
 - Treat the vehicle like app state: subscribe to signals, read the latest values
-  from `car.state`, and send commands through a consistent API.
+  from `car.state`, and run queries or actions through a consistent API.
 - Applications use signal names. The DBC controller maps those names to CAN IDs,
   bit layout, protocol metadata, and diagnostic bindings.
-- `frame` signals are decoded from incoming CAN frames, can be subscribed to,
-  and can be sent as commands.
+- `frame` signals are decoded from incoming CAN frames and can be subscribed to.
 - Diagnostic signals are requested on demand through `query()` or polled through
   `subscribeQuery()`.
 - A transport only sends and receives frames. It does not need to parse DBC
@@ -73,32 +67,48 @@ await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 - Multiple vehicles can be connected at the same time. Each vehicle has isolated
   state and DBC bindings.
 
-## DBC Metadata
+## Profiles And DBC
 
-DBC files define CAN messages and signals. This library uses standard `BA_`
-attributes to mark diagnostic PID signals. Regular DBC signals are `frame`
-signals, which can be subscribed to or used as commands depending on the API
-call:
+DBC files define received CAN messages and signal bit layouts. YAML profiles
+define the executable capabilities: endpoints, request/response queries,
+actions, monitor subscriptions, applicability, and DBC decoder references. The
+library does not ship a built-in catalog of PIDs, actions, request bytes, or
+decoder mappings; loaded YAML+DBC files are the source of truth.
 
-```dbc
-BA_DEF_ SG_ "SignalProtocol" STRING;
-BA_DEF_ SG_ "Pid" INT 0 65535;
-BA_DEF_ SG_ "RequestCanId" INT 0 536870911;
-BA_DEF_ SG_ "ResponseCanId" INT 0 536870911;
-BA_DEF_ SG_ "DiagnosticServiceId" INT 0 255;
-BA_DEF_ SG_ "UdsDid" INT 0 65535;
-BA_DEF_ SG_ "DiagnosticTransport" STRING;
-BA_DEF_ SG_ "ResponseLength" INT 0 4095;
-BA_DEF_ SG_ "SignalValueType" STRING;
+```yaml
+version: 1
 
-BA_ "SignalProtocol" SG_ 201 VEHICLE_SPEED "pid";
-BA_ "Pid" SG_ 201 VEHICLE_SPEED 13;
-BA_ "RequestCanId" SG_ 201 VEHICLE_SPEED 200;
-BA_ "ResponseCanId" SG_ 201 VEHICLE_SPEED 201;
-BA_ "DiagnosticTransport" SG_ 201 VEHICLE_SPEED "single";
+dbc:
+  files:
+    - path: signals.dbc
+
+endpoints:
+  obd:
+    request_id: 0x7DF
+    response_ids:
+      - range: [0x7E8, 0x7EF]
+    timeout_ms: 500
+
+queries:
+  SPEED:
+    endpoint: obd
+    send: [0x01, 0x0D]
+    expect: [0x41, 0x0D]
+    decoder:
+      dbc_message: OBD_Response_7E8
+      signal: SPEED
 ```
 
-Signals without `SignalProtocol` default to `frame`.
+```dbc
+BO_ 2024 OBD_Response_7E8: 8 ECU
+ SG_ RESPONSE_SERVICE : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ PID M : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ SPEED m13 : 24|8@1+ (1,0) [0|255] "km/h" Vector__XXX
+```
+
+Raw DBC-only loading is still supported for simple frame subscriptions and
+legacy tests. In profile-backed vehicles, executable names come from YAML
+`queries`, `actions`, and `signals` declarations.
 
 DBC `VAL_` entries can also expose normalized state names for enum-like signal
 values. This is useful when one physical signal encodes mutually exclusive
@@ -115,24 +125,9 @@ VAL_ 1549 TurnSignalTick 0 "off" 1 "LEFT_TURN_SIGNAL" 2 "RIGHT_TURN_SIGNAL" 3 "H
 `RIGHT_TURN_SIGNAL`, and `HAZARD_LIGHTS` are subscribable enum states derived
 from its `VAL_` table.
 
-Supported signal-level attributes:
-
-- `SignalProtocol`: `"frame"` or `"pid"`.
-- `Pid`: OBD-style PID number for diagnostic PID requests.
-- `RequestCanId`: CAN ID used for diagnostic requests.
-- `ResponseCanId`: CAN ID expected for diagnostic responses.
-- `DiagnosticServiceId`: diagnostic service/mode ID, such as OBD-II service
-  `0x01` for current data or `0x09` for vehicle information.
-- `UdsDid`: UDS data identifier.
-- `DiagnosticTransport`: `"single"` or `"isotp"`. ISO-TP means the
-  transport/device should gather a reassembled logical response before returning.
-- `ResponseLength`: expected logical response length after the response service
-  and PID/DID bytes are stripped.
-- `SignalValueType`: `"number"`, `"ascii"`, or `"bytes"` for payload decoding.
-
-The test fixtures include `tests/fixtures/obd2-pids.dbc` as a starter DBC for
-common OBD-II PIDs. It models the logical diagnostic payload, not CAN or ISO-TP
-frame bytes.
+The test fixtures include `tests/fixtures/vehicles/universal/pid/profile.yaml`
+and `tests/fixtures/vehicles/universal/pid/signals.dbc` as a starter profile
+pair for common OBD-II PID queries.
 
 ## Connecting Vehicles
 
@@ -144,7 +139,7 @@ const manager = new VirtualVehicleManager();
 const car = await manager.connect({
   id: "car-a",
   transport: new MockTransport(),
-  dbcFiles: [vehicleDbc],
+  profiles: [profile],
 });
 
 manager.get("car-a");
@@ -153,9 +148,9 @@ await manager.disconnect("car-a");
 await manager.disconnectAll();
 ```
 
-Calling `connect()` loads the DBC files, creates isolated controllers and state,
-connects the transport, and wires incoming transport frames into subscription
-decoding.
+Calling `connect()` loads profile-declared DBC files, creates isolated
+controllers and state, connects the transport, and wires incoming transport
+frames into subscription decoding.
 
 ## Subscriptions
 
@@ -215,35 +210,32 @@ car.unsubscribeQuery(speedSubscription);
 
 ## Queries
 
-Use `query()` for signals marked with `SignalProtocol` set to `"pid"`:
+Use `query()` for names declared under profile `queries`:
 
 ```ts
-const speed = await car.query<number>("VEHICLE_SPEED");
+const speed = await car.query<number>("SPEED");
 ```
 
-The DBC metadata describes the request and response CAN IDs plus the diagnostic
-service and PID/DID details. The transport receives a raw request frame through
-`sendRequest()` with `expectCanResponse: true` and optional diagnostic context
-such as `DiagnosticTransport` and `ResponseLength`. It returns the logical
-response payload; the vehicle strips the response service and PID/DID bytes,
-then decodes the remaining payload back into the signal value.
+The YAML profile describes the endpoint, request bytes, accepted response IDs,
+expected response prefix, and decoder. The transport receives a raw request
+frame through `sendRequest()` with `expectCanResponse: true`. The response is
+validated against `expect` and decoded by the referenced DBC signal or built-in
+decoder.
 
-For ISO-TP responses, the DBC should still describe the reassembled payload
-structure. The transport/device is responsible for ISO-TP segmentation and
-reassembly.
+Calling `query()` for a name not declared in the profile throws an unknown
+signal error.
 
-Calling `query()` for a non-`pid` signal throws a protocol error.
+## Actions
 
-## Commands
-
-Use `command()` to send a DBC-encoded frame signal:
+Use `action()` for names declared under profile `actions`:
 
 ```ts
-await car.command("HORN");
+await car.action("flash_lights");
 ```
 
-Commands are frame-based. The command controller encodes the signal into a CAN
-frame and passes the request to the transport with the original signal name.
+Actions can be request-only, verified request/response, or multi-step flows.
+Legacy raw DBC-only vehicles can still use `action()` with action options to send
+encoded frame signals.
 
 ## Vehicle State
 
@@ -279,7 +271,7 @@ The core transport is intentionally dumb:
 transports can implement `VehicleTransport` by mapping these methods onto the
 firmware characteristics:
 
-- `sendRequest()` maps to the Request characteristic. Commands use
+- `sendRequest()` maps to the Request characteristic. Actions use
   `expectCanResponse: false`; PID and diagnostic reads use
   `expectCanResponse: true`.
 - `updateMonitor()` maps to the Monitor Control characteristic with `add`,
@@ -353,7 +345,7 @@ npm run typecheck
 npm run build
 ```
 
-The test suite uses `MockTransport` to simulate PID responses, command sends,
+The test suite uses `MockTransport` to simulate PID responses, action sends,
 subscription registration, and incoming CAN frames.
 
 ## Out of scope for v1

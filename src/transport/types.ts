@@ -1,4 +1,4 @@
-import type { CanFrame, CanPayload, CommandOptions, DiagnosticBinding } from "../dbc/types.js";
+import type { ActionOptions, CanFrame, CanPayload, DiagnosticBinding } from "../dbc/types.js";
 
 export type MonitorControlStatus =
   | "ok"
@@ -37,7 +37,7 @@ export interface VehicleRequest {
   responseIdEnd?: number;
   timeoutMs?: number;
   diagnostic?: DiagnosticBinding;
-  command?: CommandOptions;
+  action?: ActionOptions;
 }
 
 export interface VehicleTransport {

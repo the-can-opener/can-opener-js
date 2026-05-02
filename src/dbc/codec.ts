@@ -91,7 +91,7 @@ function readRaw(data: Uint8Array, signal: CodecSignal): number {
   if ((signal.byteOrder ?? "little") === "little") {
     for (let i = 0; i < signal.length; i += 1) {
       const bit = readDataBit(data, signal.startBit + i);
-      value |= bit << i;
+      value += bit * 2 ** i;
     }
     return value;
   }
@@ -121,7 +121,7 @@ function writeRaw(data: Uint8Array, signal: CodecSignal, value: number): void {
 
   if ((signal.byteOrder ?? "little") === "little") {
     for (let i = 0; i < signal.length; i += 1) {
-      writeDataBit(data, signal.startBit + i, (value >> i) & 1);
+      writeDataBit(data, signal.startBit + i, Math.floor(value / 2 ** i) % 2);
     }
     return;
   }
@@ -129,7 +129,7 @@ function writeRaw(data: Uint8Array, signal: CodecSignal, value: number): void {
   for (let i = 0; i < signal.length; i += 1) {
     const bitPosition = motorolaBitPosition(signal.startBit, i);
     const shift = signal.length - 1 - i;
-    writeDataBit(data, bitPosition, (value >> shift) & 1);
+    writeDataBit(data, bitPosition, Math.floor(value / 2 ** shift) % 2);
   }
 }
 
@@ -163,8 +163,8 @@ function motorolaBitPosition(
 }
 
 function toSigned(value: number, length: number): number {
-  const signBit = 1 << (length - 1);
-  return (value & signBit) === 0 ? value : value - 2 ** length;
+  const signBit = 2 ** (length - 1);
+  return value < signBit ? value : value - 2 ** length;
 }
 
 function fromSigned(value: number, length: number): number {
@@ -189,9 +189,9 @@ function normalizeNumericValue(value: unknown): number {
 }
 
 function assertSignalFits(data: Uint8Array, signal: CodecSignal): void {
-  if (signal.length <= 0 || signal.length > 31) {
+  if (signal.length <= 0 || signal.length > 52) {
     throw new Error(
-      `Signal length must be between 1 and 31 bits, received ${signal.length}`,
+      `Signal length must be between 1 and 52 bits, received ${signal.length}`,
     );
   }
 

@@ -1,0 +1,52 @@
+version: 1
+
+applies_to:
+  manufacturers: [Nissan]
+  models: [Sentra, Versa]
+  years:
+    - 2010
+
+dbc:
+  files:
+    - path: signals.dbc
+
+signals:
+  STEERING_ANGLE:
+    monitor:
+      message: STEERING
+      signal: STEERING_ANGLE
+
+  HEADLIGHTS:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: HEADLIGHTS
+
+  HIGH_BEAM:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: HIGH_BEAM
+
+  TurnSignalTick:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: TurnSignalTick
+
+  FRONT_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_LEFT_DOOR_OPEN
+
+  FRONT_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_RIGHT_DOOR_OPEN
+
+  REAR_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_LEFT_DOOR_OPEN
+
+  REAR_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_RIGHT_DOOR_OPEN

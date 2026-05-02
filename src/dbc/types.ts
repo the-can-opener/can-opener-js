@@ -1,4 +1,4 @@
-export type SignalProtocol = "frame" | "pid";
+export type SignalProtocol = "frame" | "query" | "pid";
 export type SignalValueType = "number" | "ascii" | "bytes";
 export type DiagnosticTransport = "single" | "isotp";
 export type ByteOrder = "little" | "big";
@@ -31,6 +31,7 @@ export interface VehicleSignal {
   name: string;
   protocol: SignalProtocol;
   canId: number;
+  messageName?: string;
   startBit?: number;
   length?: number;
   byteOrder?: ByteOrder;
@@ -129,7 +130,7 @@ export interface QuerySubscriptionHandle {
   readonly signalName: string;
 }
 
-export interface CommandOptions extends PollingOptions {
+export interface ActionOptions extends PollingOptions {
   value: unknown;
   mask?: number;
 }

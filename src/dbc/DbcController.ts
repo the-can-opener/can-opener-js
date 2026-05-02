@@ -49,6 +49,26 @@ export class DbcController {
 
   decodeSignal(signalName: string, payload: Uint8Array): unknown {
     const signal = this.resolve(signalName);
+    return this.decodeSignalPayload(signal, payload);
+  }
+
+  decodeMessageSignal(messageName: string, signalName: string, payload: Uint8Array): unknown {
+    const signal = this.signals.findByMessageSignal(messageName, signalName);
+    if (signal === undefined) {
+      throw new Error(`Unknown DBC decoder: ${messageName}.${signalName}`);
+    }
+    return this.decodeSignalPayload(signal, payload);
+  }
+
+  resolveMessageSignal(messageName: string, signalName: string): VehicleSignal {
+    const signal = this.signals.findByMessageSignal(messageName, signalName);
+    if (signal === undefined) {
+      throw new Error(`Unknown DBC decoder: ${messageName}.${signalName}`);
+    }
+    return signal;
+  }
+
+  private decodeSignalPayload(signal: VehicleSignal, payload: Uint8Array): unknown {
     if (!isCodecSignal(signal)) {
       return payload;
     }

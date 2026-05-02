@@ -49,6 +49,12 @@ export class SignalRegistry {
     return Array.from(this.signals.values()).filter((signal) => signal.canId === canId);
   }
 
+  findByMessageSignal(messageName: string, signalName: string): VehicleSignal | undefined {
+    return Array.from(this.signals.values()).find(
+      (signal) => signal.messageName === messageName && signal.name === signalName,
+    );
+  }
+
   values(): VehicleSignal[] {
     return Array.from(this.signals.values());
   }

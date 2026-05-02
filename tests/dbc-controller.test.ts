@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DbcController } from "../src/dbc/DbcController.js";
-import { obd2PidDbc, vehicleDbc } from "./fixtures.js";
+import { testVehicleDbc, universalPidProfile } from "./fixtures.js";
 
 describe("DbcController", () => {
   it("classifies signals from DBC attributes", () => {
     const dbc = new DbcController();
-    dbc.load([vehicleDbc]);
+    dbc.load([testVehicleDbc]);
 
     expect(dbc.resolve("VEHICLE_SPEED")).toMatchObject({
       protocol: "pid",
@@ -28,7 +28,7 @@ describe("DbcController", () => {
 
   it("encodes and decodes frame signals", () => {
     const dbc = new DbcController();
-    dbc.load([vehicleDbc]);
+    dbc.load([testVehicleDbc]);
     const frame = dbc.encodeSignal("ENGINE_RPM", 1200);
 
     expect(dbc.decodeFrame(frame)).toMatchObject([
@@ -39,41 +39,14 @@ describe("DbcController", () => {
     ]);
   });
 
-  it("links OBD-II PID requests and responses through diagnostic metadata", () => {
+  it("loads universal PID DBC files from the profile source", () => {
     const dbc = new DbcController();
-    dbc.load([obd2PidDbc]);
+    dbc.load(universalPidProfile.dbcFiles);
 
-    expect(dbc.resolve("Vehicle_Speed")).toMatchObject({
-      protocol: "pid",
+    expect(dbc.resolveMessageSignal("OBD_Response_7E8", "SPEED")).toMatchObject({
+      name: "SPEED",
       canId: 2024,
-      diagnostic: {
-        request: {
-          canId: 2015,
-          serviceId: 0x01,
-          pid: 0x0d,
-        },
-        response: {
-          canId: 2024,
-          serviceId: 0x41,
-          pid: 0x0d,
-        },
-      },
     });
-    expect(dbc.resolve("VIN")).toMatchObject({
-      diagnostic: {
-        request: {
-          canId: 2015,
-          serviceId: 0x09,
-          pid: 0x02,
-        },
-        response: {
-          canId: 2024,
-          serviceId: 0x49,
-          pid: 0x02,
-        },
-        transport: "isotp",
-        responseLength: 18,
-      },
-    });
+    expect(dbc.decodeMessageSignal("OBD_Response_7E8", "SPEED", Uint8Array.of(0, 0x41, 0x0d, 88, 0, 0, 0, 0))).toBe(88);
   });
 });
