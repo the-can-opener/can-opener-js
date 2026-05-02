@@ -5,7 +5,7 @@ import { MockTransport } from "../src/transport/index.js";
 import { testVehicleProfile, universalPidProfile } from "./fixtures.js";
 
 describe("VirtualVehicle.query", () => {
-  it("loads profile-declared PID queries from YAML and decodes with DBC references", async () => {
+  it("loads profile-declared PID queries from YAML and decodes with DBC mappings", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({

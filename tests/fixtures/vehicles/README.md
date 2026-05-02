@@ -5,7 +5,7 @@ Profiles pair YAML with DBC files:
 
 - DBC decodes received CAN frames into named signals.
 - YAML defines requests, action flows, monitor subscriptions, applicability,
-  and references to DBC decoders.
+  and references to DBC mappings.
 
 DBC never defines workflow. YAML never defines bit math.
 
@@ -306,7 +306,7 @@ queries:
 
 Queries always use BLE request/response.
 
-DBC-backed query decoders reference a message and signal from a DBC file:
+DBC-backed queries map to a message and signal from a DBC file:
 
 ```yaml
 queries:
@@ -314,8 +314,8 @@ queries:
     endpoint: obd
     send: [0x01, 0x0D]
     expect: [0x41, 0x0D]
-    decoder:
-      dbc_message: OBD_Response_7E8
+    dbc_mapping:
+      message: OBD_Response_7E8
       signal: SPEED
 ```
 
@@ -501,7 +501,7 @@ Sequences expand into multiple request transactions.
 DBC is the physical CAN payload decoder.
 
 YAML is the source of transport details, workflows, request bytes, expected
-replies, monitor definitions, and decoder references.
+replies, monitor definitions, and DBC mapping references.
 
 Capabilities are the stable universal API.
 

@@ -39,8 +39,8 @@ queries:
     endpoint: diagnostics
     send: [0x01, 0x0D]
     expect: [0x41, 0x0D]
-    decoder:
-      dbc_message: DIAGNOSTICS_RESPONSE
+    dbc_mapping:
+      message: DIAGNOSTICS_RESPONSE
       signal: VEHICLE_SPEED
 
 actions:

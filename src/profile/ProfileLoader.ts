@@ -50,6 +50,7 @@ interface RawQuery {
   endpoint?: unknown;
   send?: unknown[];
   expect?: unknown;
+  dbc_mapping?: unknown;
   decoder?: unknown;
   length?: unknown;
 }
@@ -137,12 +138,13 @@ function normalizeResponseRange(raw: unknown, path: string): ResponseIdRange {
 }
 
 function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
+  const decoder = normalizeQueryDecoder(name, raw);
   return {
     name,
     endpoint: readString(raw.endpoint, `queries.${name}.endpoint`),
     send: Uint8Array.from(readByteArray(raw.send, `queries.${name}.send`)),
     ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `queries.${name}.expect`) } : {}),
-    ...(raw.decoder !== undefined ? { decoder: normalizeDecoder(raw.decoder, `queries.${name}.decoder`) } : {}),
+    ...(decoder !== undefined ? { decoder } : {}),
     ...(raw.length !== undefined ? { length: readNumber(raw.length, `queries.${name}.length`) } : {}),
   };
 }
@@ -203,19 +205,37 @@ function expandSteps(
   });
 }
 
-function normalizeDecoder(raw: unknown, path: string): DbcDecoderRef | BuiltInDecoderRef {
+function normalizeQueryDecoder(name: string, raw: RawQuery): DbcDecoderRef | BuiltInDecoderRef | undefined {
+  if (raw.dbc_mapping !== undefined) {
+    if (raw.decoder !== undefined) {
+      throw new VirtualVehicleError(`queries.${name} cannot declare both dbc_mapping and decoder`);
+    }
+    return normalizeDbcMapping(raw.dbc_mapping, `queries.${name}.dbc_mapping`);
+  }
+  if (raw.decoder === undefined) {
+    return undefined;
+  }
+  return normalizeDecoder(raw.decoder, `queries.${name}.decoder`);
+}
+
+function normalizeDbcMapping(raw: unknown, path: string): DbcDecoderRef {
+  if (raw !== null && typeof raw === "object") {
+    const mapping = raw as { message?: unknown; signal?: unknown };
+    return {
+      type: "dbc",
+      message: readString(mapping.message, `${path}.message`),
+      signal: readString(mapping.signal, `${path}.signal`),
+    };
+  }
+  throw new VirtualVehicleError(`${path} must reference a DBC message and signal`);
+}
+
+function normalizeDecoder(raw: unknown, path: string): BuiltInDecoderRef {
   if (raw === "ascii" || raw === "bytes") {
     return { type: raw };
   }
   if (raw !== null && typeof raw === "object") {
-    const decoder = raw as { dbc_message?: unknown; signal?: unknown; type?: unknown; length?: unknown };
-    if (decoder.dbc_message !== undefined || decoder.signal !== undefined) {
-      return {
-        type: "dbc",
-        message: readString(decoder.dbc_message, `${path}.dbc_message`),
-        signal: readString(decoder.signal, `${path}.signal`),
-      };
-    }
+    const decoder = raw as { type?: unknown; length?: unknown };
     if (decoder.type === "ascii" || decoder.type === "bytes") {
       return {
         type: decoder.type,
@@ -223,7 +243,7 @@ function normalizeDecoder(raw: unknown, path: string): DbcDecoderRef | BuiltInDe
       };
     }
   }
-  throw new VirtualVehicleError(`${path} must be a DBC decoder or built-in decoder name`);
+  throw new VirtualVehicleError(`${path} must be a built-in decoder name`);
 }
 
 function normalizeExpect(raw: unknown, path: string): ExpectPattern {

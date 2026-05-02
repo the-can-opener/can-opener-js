@@ -10,16 +10,27 @@ format, the DBC responsibilities, and the BLE firmware packet interface used by
 
 - DBC files decode received CAN frames into named signals.
 - YAML profiles define requests, command flows, monitor subscriptions,
-  applicability, and references to DBC decoders.
+  applicability, and references to DBC mappings.
 - BLE firmware exposes three primitives: configure monitor, request with
   response, and request only.
 
 DBC never defines workflow. YAML never defines bit math.
 
+DBC also owns physical decode metadata such as units, scaling, offsets, byte
+order, signedness, ranges, and enum tables. YAML only points standardized
+capability names at the DBC messages and signals that decode them.
+
 ## Standard Capability Keywords
 
 These names are the stable app-facing vocabulary. Vehicle profiles map them to
-vehicle-specific CAN IDs, request bytes, response IDs, and DBC decoders.
+vehicle-specific CAN IDs, request bytes, response IDs, and DBC mappings.
+
+YAML profile keys must use the standardized names when a capability is listed in
+this document. For capabilities not listed here, profiles may define additional
+vehicle-specific names. DBC message and signal names should match the
+standardized names when practical, but this is a recommendation rather than a
+requirement because DBC files often reflect OEM, reverse-engineering, or tool
+export naming.
 
 ### Actions
 
@@ -353,6 +364,23 @@ Queries are request/response reads from the CAN bus, typically to an ECU that
 responds with a CAN frame. They are used for PIDs, UDS reads, VIN, serial
 numbers, ASCII strings, multi-frame identifiers, and status blobs.
 
+DBC-backed queries use `dbc_mapping` to point a standard YAML query name to the
+DBC message and signal that decode the response payload. The DBC owns units,
+scaling, offsets, byte order, signedness, and enum tables.
+
+```yaml
+queries:
+  SPEED:
+    endpoint: obd
+    send: [0x01, 0x0D]
+    expect: [0x41, 0x0D]
+    dbc_mapping:
+      message: OBD_Response_7E8
+      signal: SPEED
+```
+
+Use `decoder` only for built-in non-DBC decoders:
+
 ```yaml
 queries:
   VIN:
@@ -362,6 +390,33 @@ queries:
     decoder: ascii
     length: 17
 ```
+
+Supported built-in decoder forms:
+
+```yaml
+decoder: ascii
+length: 17
+```
+
+```yaml
+decoder: bytes
+```
+
+```yaml
+decoder:
+  type: ascii
+  length: 17
+```
+
+```yaml
+decoder:
+  type: bytes
+  length: 8
+```
+
+Built-in decoders operate on the response payload after the `expect` prefix is
+removed. `ascii` returns a string and trims trailing null bytes. `bytes` returns
+raw bytes. `length` limits the number of bytes consumed by the decoder.
 
 Queries always use BLE request/response.
 

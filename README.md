@@ -71,9 +71,9 @@ await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 
 DBC files define received CAN messages and signal bit layouts. YAML profiles
 define the executable capabilities: endpoints, request/response queries,
-actions, monitor subscriptions, applicability, and DBC decoder references. The
+actions, monitor subscriptions, applicability, and DBC mapping references. The
 library does not ship a built-in catalog of PIDs, actions, request bytes, or
-decoder mappings; loaded YAML+DBC files are the source of truth.
+DBC mappings; loaded YAML+DBC files are the source of truth.
 
 ```yaml
 version: 1
@@ -94,8 +94,8 @@ queries:
     endpoint: obd
     send: [0x01, 0x0D]
     expect: [0x41, 0x0D]
-    decoder:
-      dbc_message: OBD_Response_7E8
+    dbc_mapping:
+      message: OBD_Response_7E8
       signal: SPEED
 ```
 
@@ -219,10 +219,10 @@ const speed = await car.query<number>("SPEED");
 ```
 
 The YAML profile describes the endpoint, request bytes, accepted response IDs,
-expected response prefix, and decoder. The transport receives a raw request
-frame through `sendRequest()` with `expectCanResponse: true`. The response is
-validated against `expect` and decoded by the referenced DBC signal or built-in
-decoder.
+expected response prefix, and either a `dbc_mapping` or built-in `decoder`. The
+transport receives a raw request frame through `sendRequest()` with
+`expectCanResponse: true`. The response is validated against `expect` and
+decoded by the referenced DBC signal or built-in decoder.
 
 Calling `query()` for a name not declared in the profile throws an unknown
 signal error.
