@@ -1,6 +1,8 @@
-import { buildPidRequest, decodePidResponse } from "../dbc/UdsBuilder.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { PollingOptions, QuerySubscriptionHandle, VehicleSignal } from "../dbc/types.js";
+import type { CanPayload, PollingOptions, QuerySubscriptionHandle } from "../dbc/types.js";
+import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import { assertExpectedResponse, buildRequestFrame, responseBounds, stripExpectedPrefix } from "../profile/RequestBuilder.js";
+import type { ProfileQuery, QueryDecoder } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
@@ -8,7 +10,7 @@ type Timer = ReturnType<typeof setTimeout>;
 
 interface ActiveQuerySubscription {
   handle: QuerySubscriptionHandle;
-  signal: VehicleSignal;
+  query: ProfileQuery;
   interval: Timer;
   durationTimer?: Timer;
   inFlight?: Promise<unknown>;
@@ -25,31 +27,25 @@ export class QueryController {
     private readonly state: VehicleState,
     private readonly dbc: DbcController,
     private readonly transport: VehicleTransport,
+    private readonly capabilities?: CapabilityRegistry,
   ) {}
 
-  async request(signal: VehicleSignal): Promise<unknown> {
-    // Queries are diagnostic request/response exchanges; OBD-II PID reads are
-    // one supported encoding of that broader pattern.
-    const frame = buildPidRequest(signal);
-    const responseCanId = signal.diagnostic?.response.canId;
+  async requestProfile(query: ProfileQuery): Promise<unknown> {
+    const endpoint = this.resolveEndpoint(query.endpoint);
+    const frame = buildRequestFrame(endpoint, query.send);
     const promise = this.transport.sendRequest({
-      signalName: signal.name,
+      signalName: query.name,
       txFrame: frame,
       expectCanResponse: true,
-      ...(responseCanId !== undefined
-        ? {
-            responseIdStart: responseCanId,
-            responseIdEnd: responseCanId,
-          }
-        : {}),
-      ...(signal.diagnostic !== undefined ? { diagnostic: signal.diagnostic } : {}),
+      ...responseBounds(endpoint),
+      ...(endpoint.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
     }).then((payload) => {
       if (payload === undefined) {
-        throw new Error(`No response payload returned for query signal ${signal.name}`);
+        throw new Error(`No response payload returned for query ${query.name}`);
       }
-      const decodedPayload = decodePidResponse(signal, payload);
-      const value = this.dbc.decodeSignal(signal.name, decodedPayload);
-      this.state.update(signal.name, value);
+      assertExpectedResponse(query.expect, payload);
+      const value = this.decodeProfileQuery(query, payload);
+      this.state.update(query.name, value);
       return value;
     });
 
@@ -61,8 +57,8 @@ export class QueryController {
     }
   }
 
-  async subscribe(signal: VehicleSignal, opts: PollingOptions = {}): Promise<QuerySubscriptionHandle> {
-    this.cancel(signal.name);
+  async subscribe(query: ProfileQuery, opts: PollingOptions = {}): Promise<QuerySubscriptionHandle> {
+    this.cancel(query.name);
 
     const frequencyHz = opts.frequencyHz ?? DEFAULT_QUERY_SUBSCRIPTION_FREQUENCY_HZ;
     if (frequencyHz <= 0) {
@@ -71,11 +67,11 @@ export class QueryController {
 
     const handle: QuerySubscriptionHandle = {
       id: String(this.nextSubscriptionId++),
-      signalName: signal.name,
+      signalName: query.name,
     };
     const active: ActiveQuerySubscription = {
       handle,
-      signal,
+      query,
       interval: setInterval(() => {
         this.poll(active);
       }, 1000 / frequencyHz),
@@ -83,11 +79,11 @@ export class QueryController {
 
     if (opts.durationMs !== undefined) {
       active.durationTimer = setTimeout(() => {
-        this.cancel(signal.name);
+        this.cancel(query.name);
       }, opts.durationMs);
     }
 
-    this.activeBySignal.set(signal.name, active);
+    this.activeBySignal.set(query.name, active);
     this.poll(active);
 
     return handle;
@@ -130,10 +126,48 @@ export class QueryController {
       return;
     }
 
-    active.inFlight = this.request(active.signal)
+    active.inFlight = this.requestProfile(active.query)
       .catch(() => undefined)
       .finally(() => {
         delete active.inFlight;
       });
+  }
+
+  private resolveEndpoint(name: string) {
+    if (this.capabilities === undefined) {
+      throw new Error(`No capability registry configured for endpoint ${name}`);
+    }
+    return this.capabilities.resolveEndpoint(name);
+  }
+
+  private decodeProfileQuery(query: ProfileQuery, payload: CanPayload): unknown {
+    if (query.decoder === undefined) {
+      return stripExpectedPrefix(query.expect, payload);
+    }
+    const decoderPayload = query.decoder.type === "dbc" ? payload : stripExpectedPrefix(query.expect, payload);
+    return decodeProfilePayload(this.dbc, query.decoder, decoderPayload, query.length);
+  }
+}
+
+function decodeProfilePayload(
+  dbc: DbcController,
+  decoder: QueryDecoder,
+  payload: CanPayload,
+  queryLength: number | undefined,
+): unknown {
+  switch (decoder.type) {
+    case "dbc":
+      return dbc.decodeMessageSignal(decoder.message, decoder.signal, payload);
+    case "ascii": {
+      const length = decoder.length ?? queryLength;
+      const bytes = length === undefined ? payload : payload.slice(0, length);
+      return new TextDecoder().decode(bytes).replace(/\0+$/u, "");
+    }
+    case "bytes":
+      return decoder.length === undefined ? payload : payload.slice(0, decoder.length);
+    default: {
+      const exhaustive: never = decoder;
+      return exhaustive;
+    }
   }
 }

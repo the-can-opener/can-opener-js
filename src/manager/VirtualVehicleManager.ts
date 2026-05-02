@@ -1,9 +1,12 @@
-import { CommandController } from "../controllers/CommandController.js";
+import { ActionController } from "../controllers/ActionController.js";
 import { QueryController } from "../controllers/QueryController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import { DbcController, type DbcControllerOptions } from "../dbc/DbcController.js";
 import type { DbcFile } from "../dbc/types.js";
 import { VehicleConnectionError } from "../errors.js";
+import { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import { ProfileLoader } from "../profile/ProfileLoader.js";
+import type { VehicleProfileSource } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import { VehicleState } from "../vehicle/VehicleState.js";
 import { VirtualVehicle } from "../vehicle/VirtualVehicle.js";
@@ -11,7 +14,8 @@ import { VirtualVehicle } from "../vehicle/VirtualVehicle.js";
 export interface ConnectVehicleOptions {
   id: string;
   transport: VehicleTransport;
-  dbcFiles: DbcFile[];
+  dbcFiles?: DbcFile[];
+  profiles?: VehicleProfileSource[];
   dbc?: DbcControllerOptions;
 }
 
@@ -25,11 +29,17 @@ export class VirtualVehicleManager {
 
     const state = new VehicleState();
     const dbc = new DbcController(options.dbc);
-    dbc.load(options.dbcFiles);
+    const capabilities = new CapabilityRegistry();
+    const profiles = new ProfileLoader().load(options.profiles ?? []);
+    capabilities.load(profiles);
+    dbc.load([
+      ...(options.dbcFiles ?? []),
+      ...profiles.flatMap((profile) => profile.dbcFiles),
+    ]);
 
     const subscriptions = new SubscriptionController(state, dbc, options.transport);
-    const queries = new QueryController(state, dbc, options.transport);
-    const commands = new CommandController(dbc, options.transport);
+    const queries = new QueryController(state, dbc, options.transport, capabilities);
+    const actions = new ActionController(dbc, options.transport, capabilities);
 
     await options.transport.connect();
 
@@ -42,7 +52,8 @@ export class VirtualVehicleManager {
     const vehicle = new VirtualVehicle(options.id, state, dbc, options.transport, {
       subscriptions,
       queries,
-      commands,
+      actions,
+      capabilities,
       disposeFrames,
     });
 

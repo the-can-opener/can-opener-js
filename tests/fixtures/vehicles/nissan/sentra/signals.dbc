@@ -42,7 +42,8 @@ BO_ 2 STEERING: 5 XXX
 BO_ 1549 LIGHTS_STATUS_60D: 8 BCM
  SG_ HEADLIGHTS : 1|2@1+ (1,0) [0|3] "" Vector__XXX
  SG_ HIGH_BEAM : 11|1@1+ (1,0) [0|1] "" Vector__XXX
- SG_ TurnSignalTick : 13|2@1+ (1,0) [0|3] "" Vector__XXX
+ SG_ LEFT_SIGNAL : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ RIGHT_SIGNAL : 14|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ FRONT_LEFT_DOOR_OPEN : 3|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ FRONT_RIGHT_DOOR_OPEN : 4|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ REAR_LEFT_DOOR_OPEN : 5|1@1+ (1,0) [0|1] "" Vector__XXX
@@ -50,7 +51,6 @@ BO_ 1549 LIGHTS_STATUS_60D: 8 BCM
 
 VAL_ 1549 HEADLIGHTS 0 "off" 2 "headlights_on" 3 "fog_lights_on";
 VAL_ 1549 HIGH_BEAM 0 "off" 1 "on";
-VAL_ 1549 TurnSignalTick 0 "off" 1 "LEFT_TURN_SIGNAL" 2 "RIGHT_TURN_SIGNAL" 3 "HAZARD_LIGHTS";
 VAL_ 1549 FRONT_LEFT_DOOR_OPEN 0 "closed" 1 "open";
 VAL_ 1549 FRONT_RIGHT_DOOR_OPEN 0 "closed" 1 "open";
 VAL_ 1549 REAR_LEFT_DOOR_OPEN 0 "closed" 1 "open";
@@ -59,7 +59,8 @@ VAL_ 1549 REAR_RIGHT_DOOR_OPEN 0 "closed" 1 "open";
 CM_ BO_ 1549 "CAN ID 0x60D from Nissan Sentra 2010 notes. Light-related signals plus door ajar bits included because they share the same frame.";
 CM_ SG_ 1549 HEADLIGHTS "From nissan.md: A.2-A.3 => 0b00 off, 0b10 headlights on, 0b11 fog lights on.";
 CM_ SG_ 1549 HIGH_BEAM "From nissan.md: B.4 => 0 high beams off, 1 high beams on.";
-CM_ SG_ 1549 TurnSignalTick "From nissan.md: B.6-B.7 => 0b00 off tick, 0b01 left turn tick, 0b10 right turn tick, 0b11 hazard blink on.";
+CM_ SG_ 1549 LEFT_SIGNAL "From nissan.md: B.6 => 0 left signal off, 1 left signal on.";
+CM_ SG_ 1549 RIGHT_SIGNAL "From nissan.md: B.7 => 0 right signal off, 1 right signal on.";
 CM_ SG_ 1549 FRONT_LEFT_DOOR_OPEN "From nissan.md: A.4 => 0 closed, 1 open.";
 CM_ SG_ 1549 FRONT_RIGHT_DOOR_OPEN "From nissan.md: A.5 => 0 closed, 1 open.";
 CM_ SG_ 1549 REAR_LEFT_DOOR_OPEN "From nissan.md: A.6 => 0 closed, 1 open.";

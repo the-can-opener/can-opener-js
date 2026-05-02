@@ -1,22 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import { vehicleDbc } from "./fixtures.js";
+import { testVehicleProfile } from "./fixtures.js";
 
-describe("VirtualVehicle.command", () => {
-  it("encodes and sends command frames", async () => {
+describe("VirtualVehicle.action", () => {
+  it("sends profile-declared action frames", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
-    await car.command("HORN", {
-      value: true,
-      mask: 0b00000001,
-    });
+    await car.action("HORN");
 
     expect(transport.requests).toHaveLength(1);
     expect(transport.requests[0]).toMatchObject({

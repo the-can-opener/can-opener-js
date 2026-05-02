@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 
 const MESSAGE_RE = /^BO_\s+(\d+)\s+(\w+)\s*:\s*(\d+)\s+(\w+)/;
-const SIGNAL_RE = /^SG_\s+(\w+)(?:\s+m\d+M?)?\s*:\s*(\d+)\|(\d+)@([01])([+-])\s+\(([-+.\deE]+),([-+.\deE]+)\)\s+\[([-+.\deE]+)\|([-+.\deE]+)\]\s+"([^"]*)"\s*(.*)$/;
+const SIGNAL_RE = /^SG_\s+(\w+)(?:\s+(?:M|m\d+M?))?\s*:\s*(\d+)\|(\d+)@([01])([+-])\s+\(([-+.\deE]+),([-+.\deE]+)\)\s+\[([-+.\deE]+)\|([-+.\deE]+)\]\s+"([^"]*)"\s*(.*)$/;
 const VALUE_TABLE_RE = /^VAL_\s+(\d+)\s+(\w+)\s+(.+);$/;
 const ATTRIBUTE_DEFINITION_RE = /^BA_DEF_\s+(?:(SG_|BO_|BU_|EV_)\s+)?"([^"]+)"\s+(\w+)(?:\s+(.+))?;$/;
 const ATTRIBUTE_RE = /^BA_\s+"([^"]+)"\s+(?:(SG_|BO_|BU_|EV_)\s+)?(.+);$/;

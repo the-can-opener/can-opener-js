@@ -1,21 +1,76 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildPidRequest } from "../src/dbc/UdsBuilder.js";
+import type { CanFrame } from "../src/dbc/types.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import { obd2PidDbc, vehicleDbc } from "./fixtures.js";
+import { testVehicleProfile, universalPidProfile } from "./fixtures.js";
 
 describe("VirtualVehicle.query", () => {
+  it("loads profile-declared PID queries from YAML and decodes with DBC references", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [universalPidProfile],
+    });
+    const response = car.dbc.encodeSignal("RPM", 3000);
+    response.data[1] = 0x41;
+    response.data[2] = 0x0c;
+
+    transport.scriptPidResponse(requestFrame(0x01, 0x0c), response.data);
+
+    await expect(car.query<number>("RPM")).resolves.toBe(3000);
+    expect(car.state.get<number>("RPM")).toBe(3000);
+    expect(transport.requests[0]).toMatchObject({
+      signalName: "RPM",
+      expectCanResponse: true,
+      responseIdStart: 0x7e8,
+      responseIdEnd: 0x7ef,
+      timeoutMs: 500,
+    });
+    expect(Array.from(transport.requests[0]?.txFrame.data ?? [])).toEqual([0x01, 0x0c, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it("supports profile query aliases that decode a different DBC signal", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [universalPidProfile],
+    });
+    const response = car.dbc.encodeSignal("O2_B1S1_VOLTAGE", 0.5);
+    response.data[1] = 0x41;
+    response.data[2] = 0x14;
+
+    transport.scriptPidResponse(requestFrame(0x01, 0x14), response.data);
+
+    await expect(car.query<number>("O2_DATA")).resolves.toBe(0.5);
+    expect(car.state.get<number>("O2_DATA")).toBe(0.5);
+  });
+
+  it("does not execute undeclared DBC signals as profile queries", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [universalPidProfile],
+    });
+
+    await expect(car.query("O2_B1S1_VOLTAGE")).rejects.toThrow("Unknown vehicle signal: O2_B1S1_VOLTAGE");
+  });
+
   it("sends a query request, decodes the response, and updates state", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
-    const signal = car.dbc.resolve("VEHICLE_SPEED");
 
-    transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
+    transport.scriptPidResponse(requestFrame(0x01, 0x0d, 200), Uint8Array.of(0x41, 0x0d, 88));
 
     await expect(car.query<number>("VEHICLE_SPEED")).resolves.toBe(88);
     expect(car.state.get<number>("VEHICLE_SPEED")).toBe(88);
@@ -26,27 +81,26 @@ describe("VirtualVehicle.query", () => {
     });
   });
 
-  it("passes diagnostic transport metadata to query transports", async () => {
+  it("loads VIN queries from the universal PID profile", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [obd2PidDbc],
+      profiles: [universalPidProfile],
     });
-    const signal = car.dbc.resolve("VIN");
     const vin = new TextEncoder().encode("1HGCM82633A004352");
 
-    transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x49, 0x02, 0x01, ...vin));
+    transport.scriptPidResponse(requestFrame(0x09, 0x02), Uint8Array.of(0x49, 0x02, 0x01, ...vin));
 
     await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
     expect(car.state.get<string>("VIN")).toBe("1HGCM82633A004352");
     expect(transport.requests[0]).toMatchObject({
       signalName: "VIN",
-      diagnostic: {
-        transport: "isotp",
-        responseLength: 18,
-      },
+      expectCanResponse: true,
+      responseIdStart: 0x7e8,
+      responseIdEnd: 0x7ef,
+      timeoutMs: 500,
     });
   });
 
@@ -58,10 +112,9 @@ describe("VirtualVehicle.query", () => {
       const car = await manager.connect({
         id: "car-a",
         transport,
-        dbcFiles: [vehicleDbc],
+        profiles: [testVehicleProfile],
       });
-      const signal = car.dbc.resolve("VEHICLE_SPEED");
-      transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
+      transport.scriptPidResponse(requestFrame(0x01, 0x0d, 200), Uint8Array.of(0x41, 0x0d, 88));
 
       const subscription = await car.subscribeQuery("VEHICLE_SPEED", {
         frequencyHz: 2,
@@ -92,10 +145,9 @@ describe("VirtualVehicle.query", () => {
       const car = await manager.connect({
         id: "car-a",
         transport,
-        dbcFiles: [vehicleDbc],
+        profiles: [testVehicleProfile],
       });
-      const signal = car.dbc.resolve("VEHICLE_SPEED");
-      transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
+      transport.scriptPidResponse(requestFrame(0x01, 0x0d, 200), Uint8Array.of(0x41, 0x0d, 88));
 
       const staleSubscription = await car.subscribeQuery("VEHICLE_SPEED", {
         frequencyHz: 2,
@@ -124,11 +176,20 @@ describe("VirtualVehicle.query", () => {
     const car = await manager.connect({
       id: "car-a",
       transport,
-      dbcFiles: [vehicleDbc],
+      profiles: [testVehicleProfile],
     });
 
-    await expect(car.subscribeQuery("ENGINE_RPM")).rejects.toThrow(
-      "ENGINE_RPM is not a query signal (actual protocol: frame)",
-    );
+    await expect(car.subscribeQuery("ENGINE_RPM")).rejects.toThrow("Unknown vehicle signal: ENGINE_RPM");
   });
 });
+
+function requestFrame(service: number, pid: number, canId = 0x7df): CanFrame {
+  const data = new Uint8Array(8);
+  data[0] = service;
+  data[1] = pid;
+  return {
+    canId,
+    dlc: 2,
+    data,
+  };
+}
