@@ -59,6 +59,10 @@ namespace is the PID list below.
 - `STEERING_ANGLE`
 - `LOW_BEAMS`
 - `HIGH_BEAMS`
+- `FRONT_LEFT_DOOR_OPEN`
+- `FRONT_RIGHT_DOOR_OPEN`
+- `REAR_LEFT_DOOR_OPEN`
+- `REAR_RIGHT_DOOR_OPEN`
 
 `TPS` means throttle position.
 
@@ -73,6 +77,8 @@ uses `normalize.enum` to translate car-specific labels:
 - `FUEL_LEVEL`: number, typically `%`
 - `LEFT_SIGNAL`, `RIGHT_SIGNAL`, `BRAKE_LIGHTS`, `LOW_BEAMS`, `HIGH_BEAMS`:
   `"off"` or `"on"`
+- `FRONT_LEFT_DOOR_OPEN`, `FRONT_RIGHT_DOOR_OPEN`, `REAR_LEFT_DOOR_OPEN`,
+  `REAR_RIGHT_DOOR_OPEN`: `"closed"` or `"open"`
 
 If no `normalize` block is declared, the script-facing value is the DBC-decoded
 value. Signals with a matching DBC `VAL_` entry return the enum label; other
