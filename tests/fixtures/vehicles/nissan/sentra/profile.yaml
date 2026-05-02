@@ -26,10 +26,15 @@ signals:
       message: LIGHTS_STATUS_60D
       signal: HIGH_BEAM
 
-  TurnSignalTick:
+  LEFT_SIGNAL:
     monitor:
       message: LIGHTS_STATUS_60D
-      signal: TurnSignalTick
+      signal: LEFT_SIGNAL
+
+  RIGHT_SIGNAL:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: RIGHT_SIGNAL
 
   FRONT_LEFT_DOOR_OPEN:
     monitor:

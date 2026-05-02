@@ -115,15 +115,14 @@ values. This is useful when one physical signal encodes mutually exclusive
 states, but the app wants to subscribe to those states by keyword:
 
 ```dbc
-BO_ 1549 LIGHTS_STATUS_60D: 8 BCM
- SG_ TurnSignalTick : 13|2@1+ (1,0) [0|3] "" Vector__XXX
+BO_ 100 DRIVE_STATUS: 8 BCM
+ SG_ DRIVE_MODE : 0|2@1+ (1,0) [0|3] "" Vector__XXX
 
-VAL_ 1549 TurnSignalTick 0 "off" 1 "LEFT_TURN_SIGNAL" 2 "RIGHT_TURN_SIGNAL" 3 "HAZARD_LIGHTS";
+VAL_ 100 DRIVE_MODE 0 "park" 1 "REVERSE" 2 "DRIVE" 3 "LOW_GEAR";
 ```
 
-`TurnSignalTick` remains the physical DBC signal. `LEFT_TURN_SIGNAL`,
-`RIGHT_TURN_SIGNAL`, and `HAZARD_LIGHTS` are subscribable enum states derived
-from its `VAL_` table.
+`DRIVE_MODE` remains the physical DBC signal. `REVERSE`, `DRIVE`, and
+`LOW_GEAR` are subscribable enum states derived from its `VAL_` table.
 
 The test fixtures include `tests/fixtures/vehicles/universal/pid/profile.yaml`
 and `tests/fixtures/vehicles/universal/pid/signals.dbc` as a starter profile
@@ -180,9 +179,9 @@ await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 
 Subscriptions may target either a physical DBC signal name or a normalized
 enum-state name defined in a signal's `VAL_` table. For example, subscribing to
-`LEFT_TURN_SIGNAL` watches the parent `TurnSignalTick` CAN frame and updates
-`LEFT_TURN_SIGNAL` to `1` only when `TurnSignalTick` decodes to the matching
-enum value; otherwise it updates to `0`.
+`REVERSE` watches the parent `DRIVE_MODE` CAN frame and updates `REVERSE` to
+`1` only when `DRIVE_MODE` decodes to the matching enum value; otherwise it
+updates to `0`.
 
 When multiple signals share a CAN frame, the transport receives one merged
 subscription request for that frame. Removing the last active signal for a CAN
@@ -254,8 +253,8 @@ dispose();
 
 State keys are stored by the subscribed name. For physical DBC signals, that is
 the signal name. For `VAL_` enum-state subscriptions, that is the enum-state
-name, such as `LEFT_TURN_SIGNAL`. Property access also accepts common camelCase
-or snake_case variants by converting them to upper snake case.
+name, such as `REVERSE`. Property access also accepts common camelCase or
+snake_case variants by converting them to upper snake case.
 
 ## Transport
 
