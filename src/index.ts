@@ -1,5 +1,5 @@
 export * from "./controllers/CommandController.js";
-export * from "./controllers/PidController.js";
+export * from "./controllers/QueryController.js";
 export * from "./controllers/SubscriptionController.js";
 export * from "./dbc/DbcController.js";
 export * from "./dbc/DbcParser.js";

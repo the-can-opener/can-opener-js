@@ -124,7 +124,7 @@ export interface PollingOptions {
   durationMs?: number;
 }
 
-export interface PidSubscriptionHandle {
+export interface QuerySubscriptionHandle {
   readonly id: string;
   readonly signalName: string;
 }

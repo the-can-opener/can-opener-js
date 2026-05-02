@@ -1,12 +1,12 @@
 import { CommandController } from "../controllers/CommandController.js";
-import { PidController } from "../controllers/PidController.js";
+import { QueryController } from "../controllers/QueryController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
 import type {
   CommandOptions,
   DbcFile,
-  PidSubscriptionHandle,
   PollingOptions,
+  QuerySubscriptionHandle,
   VehicleSignalState,
 } from "../dbc/types.js";
 import { SignalProtocolError } from "../errors.js";
@@ -15,7 +15,7 @@ import type { VehicleState } from "./VehicleState.js";
 
 export interface VirtualVehicleInternals {
   subscriptions: SubscriptionController;
-  pids: PidController;
+  queries: QueryController;
   commands: CommandController;
   disposeFrames: () => void;
 }
@@ -33,13 +33,13 @@ export class VirtualVehicle {
     private readonly internals: VirtualVehicleInternals,
   ) {}
 
-  async pid<T = unknown>(signalName: string): Promise<T> {
+  async query<T = unknown>(signalName: string): Promise<T> {
     const signal = this.dbc.resolve(signalName);
     if (signal.protocol !== "pid") {
-      throw new SignalProtocolError(signalName, "PID", signal.protocol);
+      throw new SignalProtocolError(signalName, "query", signal.protocol);
     }
 
-    return await this.internals.pids.request(signal) as T;
+    return await this.internals.queries.request(signal) as T;
   }
 
   async subscribe(signalName: string): Promise<boolean>;
@@ -84,17 +84,17 @@ export class VirtualVehicle {
     return this.internals.subscriptions.count();
   }
 
-  async subscribePid(signalName: string, opts: PollingOptions = {}): Promise<PidSubscriptionHandle> {
+  async subscribeQuery(signalName: string, opts: PollingOptions = {}): Promise<QuerySubscriptionHandle> {
     const signal = this.dbc.resolve(signalName);
     if (signal.protocol !== "pid") {
-      throw new SignalProtocolError(signalName, "PID", signal.protocol);
+      throw new SignalProtocolError(signalName, "query", signal.protocol);
     }
 
-    return await this.internals.pids.subscribe(signal, opts);
+    return await this.internals.queries.subscribe(signal, opts);
   }
 
-  unsubscribePid(handle: PidSubscriptionHandle): void {
-    this.internals.pids.cancelHandle(handle);
+  unsubscribeQuery(handle: QuerySubscriptionHandle): void {
+    this.internals.queries.cancelHandle(handle);
   }
 
   async command(signalName: string, opts: CommandOptions): Promise<void> {
@@ -110,8 +110,8 @@ export class VirtualVehicle {
     this.state.clear();
     this.dbc.load(files);
     this.internals.subscriptions.cancelAll();
-    this.internals.pids.cancelAllSubscriptions();
-    this.internals.pids.clearPending();
+    this.internals.queries.cancelAllSubscriptions();
+    this.internals.queries.clearPending();
     this.internals.commands.clearScheduled();
   }
 
@@ -121,8 +121,8 @@ export class VirtualVehicle {
 
   async disconnect(): Promise<void> {
     this.internals.subscriptions.cancelAll();
-    this.internals.pids.cancelAllSubscriptions();
-    this.internals.pids.clearPending();
+    this.internals.queries.cancelAllSubscriptions();
+    this.internals.queries.clearPending();
     this.internals.commands.clearScheduled();
     this.internals.disposeFrames();
     await this.transport.disconnect();

@@ -1,13 +1,21 @@
 # can-opener-js
 
-Signal-first TypeScript library for modeling virtual vehicles on top of DBC
-metadata and a pluggable CAN transport. Each connected vehicle owns its own DBC
-bindings, transport, controllers, APIs, and state, so multi-vehicle apps do not
-need globals or shared registries.
+React-style vehicle state for cars. `can-opener-js` gives TypeScript apps a
+virtual vehicle object that monitors the state of a car through named signals and
+uses common commands to control that state, without forcing the app to speak raw
+CAN. It abstracts DBC files, CAN IDs, byte order, scaling, masks, and bit-level
+signal packing behind named vehicle state.
 
-`can-opener-js` is intentionally small: it turns signal names like
-`ENGINE_RPM`, `TURN_SIGNAL_LEFT`, and `VEHICLE_SPEED` into DBC-aware operations
-while leaving real CAN, BLE, firmware, and ISO-TP details to the transport layer.
+Under the hood, it is a signal-first library for modeling virtual vehicles on
+top of DBC metadata and a pluggable CAN transport. Each connected vehicle owns
+its own DBC bindings, transport, controllers, APIs, and state, so multi-vehicle
+apps do not need globals or shared registries. That makes vehicle scripts
+portable: the same code can run across different cars by swapping the DBC files
+and transport.
+
+It turns signal names like `ENGINE_RPM`, `TURN_SIGNAL_LEFT`, and
+`VEHICLE_SPEED` into DBC-aware state reads, subscriptions, and commands while
+leaving real CAN, BLE, firmware, and ISO-TP details to the transport layer.
 
 ## Install
 
@@ -35,7 +43,7 @@ const rpmSubscribed = await car.subscribe("ENGINE_RPM"); // true
 const bodySubscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]); // true
 const activeSubscriptions = car.subscriptionCount();
 
-const speed = await car.pid("VEHICLE_SPEED");
+const speed = await car.query("VEHICLE_SPEED");
 const rpm = car.state.engine_rpm;
 const alsoRpm = car.state.get<number>("ENGINE_RPM");
 
@@ -52,12 +60,14 @@ await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 
 ## Core Ideas
 
+- Treat the vehicle like app state: subscribe to signals, read the latest values
+  from `car.state`, and send commands through a consistent API.
 - Applications use signal names. The DBC controller maps those names to CAN IDs,
   bit layout, protocol metadata, and diagnostic bindings.
 - `frame` signals are decoded from incoming CAN frames, can be subscribed to,
   and can be sent as commands.
-- `pid` signals are requested on demand through `pid()` or polled through
-  `subscribePid()`.
+- Diagnostic signals are requested on demand through `query()` or polled through
+  `subscribeQuery()`.
 - A transport only sends and receives frames. It does not need to parse DBC
   files, know app-level signal names, or implement vehicle state.
 - Multiple vehicles can be connected at the same time. Each vehicle has isolated
@@ -155,7 +165,7 @@ subscription is tracked per CAN frame. Firmware owns the streaming cadence, so
 request. Frame subscriptions stay open until `unsubscribe()` is called.
 If `TURN_SIGNAL_LEFT` and `HIGH_BEAMS` are encoded in the same CAN ID, the
 vehicle keeps one frame subscription and modifies it as signal names are added
-or removed. PID polling is intentionally a separate API.
+or removed. Diagnostic query polling is intentionally a separate API.
 
 ```ts
 const subscribed = await car.subscribe("ENGINE_RPM"); // true
@@ -192,23 +202,23 @@ car.state.get<number>("ENGINE_RPM"); // 900
 car.state.engine_rpm; // 900
 ```
 
-PID polling subscriptions use `subscribePid()`, which returns a handle that can
-be passed to `unsubscribePid()` later:
+Query polling subscriptions use `subscribeQuery()`, which returns a handle that
+can be passed to `unsubscribeQuery()` later:
 
 ```ts
-const speedSubscription = await car.subscribePid("VEHICLE_SPEED", {
+const speedSubscription = await car.subscribeQuery("VEHICLE_SPEED", {
   frequencyHz: 2,
 });
 
-car.unsubscribePid(speedSubscription);
+car.unsubscribeQuery(speedSubscription);
 ```
 
-## PID Reads
+## Queries
 
-Use `pid()` for signals marked with `SignalProtocol` set to `"pid"`:
+Use `query()` for signals marked with `SignalProtocol` set to `"pid"`:
 
 ```ts
-const speed = await car.pid<number>("VEHICLE_SPEED");
+const speed = await car.query<number>("VEHICLE_SPEED");
 ```
 
 The DBC metadata describes the request and response CAN IDs plus the diagnostic
@@ -222,7 +232,7 @@ For ISO-TP responses, the DBC should still describe the reassembled payload
 structure. The transport/device is responsible for ISO-TP segmentation and
 reassembly.
 
-Calling `pid()` for a non-`pid` signal throws a protocol error.
+Calling `query()` for a non-`pid` signal throws a protocol error.
 
 ## Commands
 

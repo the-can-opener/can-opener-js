@@ -4,8 +4,8 @@ import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
 import { obd2PidDbc, vehicleDbc } from "./fixtures.js";
 
-describe("VirtualVehicle.pid", () => {
-  it("sends a PID request, decodes the response, and updates state", async () => {
+describe("VirtualVehicle.query", () => {
+  it("sends a query request, decodes the response, and updates state", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -17,7 +17,7 @@ describe("VirtualVehicle.pid", () => {
 
     transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
 
-    await expect(car.pid<number>("VEHICLE_SPEED")).resolves.toBe(88);
+    await expect(car.query<number>("VEHICLE_SPEED")).resolves.toBe(88);
     expect(car.state.get<number>("VEHICLE_SPEED")).toBe(88);
     expect(transport.requests).toHaveLength(1);
     expect(transport.requests[0]).toMatchObject({
@@ -26,7 +26,7 @@ describe("VirtualVehicle.pid", () => {
     });
   });
 
-  it("passes diagnostic transport metadata to PID transports", async () => {
+  it("passes diagnostic transport metadata to query transports", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -39,7 +39,7 @@ describe("VirtualVehicle.pid", () => {
 
     transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x49, 0x02, 0x01, ...vin));
 
-    await expect(car.pid<string>("VIN")).resolves.toBe("1HGCM82633A004352");
+    await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
     expect(car.state.get<string>("VIN")).toBe("1HGCM82633A004352");
     expect(transport.requests[0]).toMatchObject({
       signalName: "VIN",
@@ -50,7 +50,7 @@ describe("VirtualVehicle.pid", () => {
     });
   });
 
-  it("polls PID subscriptions and updates vehicle state", async () => {
+  it("polls query subscriptions and updates vehicle state", async () => {
     vi.useFakeTimers();
     try {
       const manager = new VirtualVehicleManager();
@@ -63,7 +63,7 @@ describe("VirtualVehicle.pid", () => {
       const signal = car.dbc.resolve("VEHICLE_SPEED");
       transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
 
-      const subscription = await car.subscribePid("VEHICLE_SPEED", {
+      const subscription = await car.subscribeQuery("VEHICLE_SPEED", {
         frequencyHz: 2,
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -75,7 +75,7 @@ describe("VirtualVehicle.pid", () => {
 
       expect(transport.requests).toHaveLength(2);
 
-      car.unsubscribePid(subscription);
+      car.unsubscribeQuery(subscription);
       await vi.advanceTimersByTimeAsync(500);
 
       expect(transport.requests).toHaveLength(2);
@@ -84,7 +84,7 @@ describe("VirtualVehicle.pid", () => {
     }
   });
 
-  it("ignores stale PID subscription handles", async () => {
+  it("ignores stale query subscription handles", async () => {
     vi.useFakeTimers();
     try {
       const manager = new VirtualVehicleManager();
@@ -97,28 +97,28 @@ describe("VirtualVehicle.pid", () => {
       const signal = car.dbc.resolve("VEHICLE_SPEED");
       transport.scriptPidResponse(buildPidRequest(signal), Uint8Array.of(0x41, 0x0d, 88));
 
-      const staleSubscription = await car.subscribePid("VEHICLE_SPEED", {
+      const staleSubscription = await car.subscribeQuery("VEHICLE_SPEED", {
         frequencyHz: 2,
       });
-      const activeSubscription = await car.subscribePid("VEHICLE_SPEED", {
+      const activeSubscription = await car.subscribeQuery("VEHICLE_SPEED", {
         frequencyHz: 2,
       });
       await vi.advanceTimersByTimeAsync(0);
 
       expect(staleSubscription).not.toEqual(activeSubscription);
 
-      car.unsubscribePid(staleSubscription);
+      car.unsubscribeQuery(staleSubscription);
       await vi.advanceTimersByTimeAsync(500);
 
       expect(transport.requests).toHaveLength(3);
 
-      car.unsubscribePid(activeSubscription);
+      car.unsubscribeQuery(activeSubscription);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("rejects frame signals for PID subscriptions", async () => {
+  it("rejects frame signals for query subscriptions", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -127,8 +127,8 @@ describe("VirtualVehicle.pid", () => {
       dbcFiles: [vehicleDbc],
     });
 
-    await expect(car.subscribePid("ENGINE_RPM")).rejects.toThrow(
-      "ENGINE_RPM is not a PID signal (actual protocol: frame)",
+    await expect(car.subscribeQuery("ENGINE_RPM")).rejects.toThrow(
+      "ENGINE_RPM is not a query signal (actual protocol: frame)",
     );
   });
 });

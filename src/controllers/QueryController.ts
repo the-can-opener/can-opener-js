@@ -1,24 +1,24 @@
 import { buildPidRequest, decodePidResponse } from "../dbc/UdsBuilder.js";
 import type { DbcController } from "../dbc/DbcController.js";
-import type { PidSubscriptionHandle, PollingOptions, VehicleSignal } from "../dbc/types.js";
+import type { PollingOptions, QuerySubscriptionHandle, VehicleSignal } from "../dbc/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
 type Timer = ReturnType<typeof setTimeout>;
 
-interface ActivePidSubscription {
-  handle: PidSubscriptionHandle;
+interface ActiveQuerySubscription {
+  handle: QuerySubscriptionHandle;
   signal: VehicleSignal;
   interval: Timer;
   durationTimer?: Timer;
   inFlight?: Promise<unknown>;
 }
 
-const DEFAULT_PID_SUBSCRIPTION_FREQUENCY_HZ = 1;
+const DEFAULT_QUERY_SUBSCRIPTION_FREQUENCY_HZ = 1;
 
-export class PidController {
+export class QueryController {
   private readonly pending = new Set<Promise<unknown>>();
-  private readonly activeBySignal = new Map<string, ActivePidSubscription>();
+  private readonly activeBySignal = new Map<string, ActiveQuerySubscription>();
   private nextSubscriptionId = 1;
 
   constructor(
@@ -28,6 +28,8 @@ export class PidController {
   ) {}
 
   async request(signal: VehicleSignal): Promise<unknown> {
+    // Queries are diagnostic request/response exchanges; OBD-II PID reads are
+    // one supported encoding of that broader pattern.
     const frame = buildPidRequest(signal);
     const responseCanId = signal.diagnostic?.response.canId;
     const promise = this.transport.sendRequest({
@@ -43,7 +45,7 @@ export class PidController {
       ...(signal.diagnostic !== undefined ? { diagnostic: signal.diagnostic } : {}),
     }).then((payload) => {
       if (payload === undefined) {
-        throw new Error(`No response payload returned for PID signal ${signal.name}`);
+        throw new Error(`No response payload returned for query signal ${signal.name}`);
       }
       const decodedPayload = decodePidResponse(signal, payload);
       const value = this.dbc.decodeSignal(signal.name, decodedPayload);
@@ -59,19 +61,19 @@ export class PidController {
     }
   }
 
-  async subscribe(signal: VehicleSignal, opts: PollingOptions = {}): Promise<PidSubscriptionHandle> {
+  async subscribe(signal: VehicleSignal, opts: PollingOptions = {}): Promise<QuerySubscriptionHandle> {
     this.cancel(signal.name);
 
-    const frequencyHz = opts.frequencyHz ?? DEFAULT_PID_SUBSCRIPTION_FREQUENCY_HZ;
+    const frequencyHz = opts.frequencyHz ?? DEFAULT_QUERY_SUBSCRIPTION_FREQUENCY_HZ;
     if (frequencyHz <= 0) {
-      throw new Error(`PID subscription frequency must be greater than 0, received ${frequencyHz}`);
+      throw new Error(`Query subscription frequency must be greater than 0, received ${frequencyHz}`);
     }
 
-    const handle: PidSubscriptionHandle = {
+    const handle: QuerySubscriptionHandle = {
       id: String(this.nextSubscriptionId++),
       signalName: signal.name,
     };
-    const active: ActivePidSubscription = {
+    const active: ActiveQuerySubscription = {
       handle,
       signal,
       interval: setInterval(() => {
@@ -108,7 +110,7 @@ export class PidController {
     this.activeBySignal.delete(signalName);
   }
 
-  cancelHandle(handle: PidSubscriptionHandle): void {
+  cancelHandle(handle: QuerySubscriptionHandle): void {
     const active = this.activeBySignal.get(handle.signalName);
     if (active === undefined || active.handle.id !== handle.id) {
       return;
@@ -123,7 +125,7 @@ export class PidController {
     }
   }
 
-  private poll(active: ActivePidSubscription): void {
+  private poll(active: ActiveQuerySubscription): void {
     if (active.inFlight !== undefined) {
       return;
     }

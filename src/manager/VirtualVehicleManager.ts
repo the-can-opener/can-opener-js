@@ -1,5 +1,5 @@
 import { CommandController } from "../controllers/CommandController.js";
-import { PidController } from "../controllers/PidController.js";
+import { QueryController } from "../controllers/QueryController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import { DbcController, type DbcControllerOptions } from "../dbc/DbcController.js";
 import type { DbcFile } from "../dbc/types.js";
@@ -28,7 +28,7 @@ export class VirtualVehicleManager {
     dbc.load(options.dbcFiles);
 
     const subscriptions = new SubscriptionController(state, dbc, options.transport);
-    const pids = new PidController(state, dbc, options.transport);
+    const queries = new QueryController(state, dbc, options.transport);
     const commands = new CommandController(dbc, options.transport);
 
     await options.transport.connect();
@@ -41,7 +41,7 @@ export class VirtualVehicleManager {
 
     const vehicle = new VirtualVehicle(options.id, state, dbc, options.transport, {
       subscriptions,
-      pids,
+      queries,
       commands,
       disposeFrames,
     });
