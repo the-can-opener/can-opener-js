@@ -70,6 +70,26 @@ signals:
       message: LIGHTS_STATUS_60D
       signal: RIGHT_SIGNAL
 
+  FRONT_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_LEFT_DOOR_OPEN
+
+  FRONT_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_RIGHT_DOOR_OPEN
+
+  REAR_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_LEFT_DOOR_OPEN
+
+  REAR_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_RIGHT_DOOR_OPEN
+
 actions:
   HORN:
     endpoint: body
