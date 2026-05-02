@@ -10,6 +10,7 @@ import type {
   ProfileEndpoint,
   ProfileMonitorSignal,
   ProfileQuery,
+  ProfileValueNormalization,
   RequestStep,
   ResponseIdRange,
   VehicleProfileSource,
@@ -44,6 +45,8 @@ interface RawSignal {
     message?: unknown;
     signal?: unknown;
   };
+  normalize?: unknown;
+  state?: unknown;
 }
 
 interface RawQuery {
@@ -53,6 +56,7 @@ interface RawQuery {
   dbc_mapping?: unknown;
   decoder?: unknown;
   length?: unknown;
+  normalize?: unknown;
 }
 
 interface RawAction {
@@ -146,6 +150,7 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
     ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `queries.${name}.expect`) } : {}),
     ...(decoder !== undefined ? { decoder } : {}),
     ...(raw.length !== undefined ? { length: readNumber(raw.length, `queries.${name}.length`) } : {}),
+    ...(raw.normalize !== undefined ? { normalize: normalizeValueNormalization(raw.normalize, `queries.${name}.normalize`) } : {}),
   };
 }
 
@@ -169,11 +174,24 @@ function normalizeSignal(name: string, raw: RawSignal): ProfileMonitorSignal[] {
   if (raw.monitor === undefined) {
     return [];
   }
+  const normalize = readSignalNormalization(name, raw);
   return [{
     name,
     message: readString(raw.monitor.message, `signals.${name}.monitor.message`),
     signal: readString(raw.monitor.signal, `signals.${name}.monitor.signal`),
+    ...(normalize !== undefined ? { normalize } : {}),
   }];
+}
+
+function readSignalNormalization(name: string, raw: RawSignal): ProfileValueNormalization | undefined {
+  if (raw.normalize !== undefined && raw.state !== undefined) {
+    throw new VirtualVehicleError(`signals.${name} cannot declare both normalize and state`);
+  }
+  const value = raw.normalize ?? raw.state;
+  if (value === undefined) {
+    return undefined;
+  }
+  return normalizeValueNormalization(value, `signals.${name}.${raw.normalize !== undefined ? "normalize" : "state"}`);
 }
 
 function expandSteps(
@@ -246,6 +264,19 @@ function normalizeDecoder(raw: unknown, path: string): BuiltInDecoderRef {
   throw new VirtualVehicleError(`${path} must be a built-in decoder name`);
 }
 
+function normalizeValueNormalization(raw: unknown, path: string): ProfileValueNormalization {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+
+  const value = raw as {
+    enum?: unknown;
+  };
+  return {
+    ...(value.enum !== undefined ? { enum: readStringMap(value.enum, `${path}.enum`) } : {}),
+  };
+}
+
 function normalizeExpect(raw: unknown, path: string): ExpectPattern {
   if (raw === "none") {
     return { pattern: [], exact: true };
@@ -306,4 +337,16 @@ function readString(raw: unknown, path: string): string {
     throw new VirtualVehicleError(`${path} must be a non-empty string`);
   }
   return raw;
+}
+
+function readStringMap(raw: unknown, path: string): Record<string, string> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+
+  const values: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    values[key] = readString(value, `${path}.${key}`);
+  }
+  return values;
 }

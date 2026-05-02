@@ -10,8 +10,8 @@ Under the hood, it is a signal-first library for modeling virtual vehicles on
 top of DBC metadata and a pluggable CAN transport. Each connected vehicle owns
 its own DBC bindings, transport, controllers, APIs, and state, so multi-vehicle
 apps do not need globals or shared registries. That makes vehicle scripts
-portable: the same code can run across different cars by swapping the DBC files
-and transport.
+portable: the same code can run across different cars by swapping the profile,
+DBC files, and transport.
 
 It turns signal names like `ENGINE_RPM`, `TURN_SIGNAL_LEFT`, and
 `VEHICLE_SPEED` into DBC-aware state reads, subscriptions, queries, and actions while
@@ -113,19 +113,20 @@ legacy tests. In profile-backed vehicles, executable names come from YAML
 See `docs/vehicle-profile-ble-spec.md` for the full YAML profile, DBC, standard
 capability keyword, PID, and BLE packet specification.
 
-DBC `VAL_` entries can also expose normalized state names for enum-like signal
-values. This is useful when one physical signal encodes mutually exclusive
-states, but the app wants to subscribe to those states by keyword:
+DBC `VAL_` entries expose enum-like signal values as labels by default. Numeric
+signals without matching `VAL_` entries return their DBC-scaled physical values:
 
 ```dbc
 BO_ 100 DRIVE_STATUS: 8 BCM
  SG_ DRIVE_MODE : 0|2@1+ (1,0) [0|3] "" Vector__XXX
 
-VAL_ 100 DRIVE_MODE 0 "park" 1 "REVERSE" 2 "DRIVE" 3 "LOW_GEAR";
+VAL_ 100 DRIVE_MODE 0 "park" 1 "reverse" 2 "drive" 3 "low";
 ```
 
-`DRIVE_MODE` remains the physical DBC signal. `REVERSE`, `DRIVE`, and
-`LOW_GEAR` are subscribable enum states derived from its `VAL_` table.
+`DRIVE_MODE` remains the physical DBC signal, and subscribing to it updates
+state to labels like `"park"` or `"drive"`. Profile `normalize` blocks can
+remap car-specific DBC labels when a portable script needs a canonical
+vocabulary.
 
 The test fixtures include `tests/fixtures/vehicles/universal/pid/profile.yaml`
 and `tests/fixtures/vehicles/universal/pid/signals.dbc` as a starter profile
@@ -180,11 +181,10 @@ const activeCount = car.subscriptionCount(); // 2
 await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
 ```
 
-Subscriptions may target either a physical DBC signal name or a normalized
-enum-state name defined in a signal's `VAL_` table. For example, subscribing to
-`REVERSE` watches the parent `DRIVE_MODE` CAN frame and updates `REVERSE` to
-`1` only when `DRIVE_MODE` decodes to the matching enum value; otherwise it
-updates to `0`.
+Profile-backed subscriptions use names declared under YAML `signals`. Without
+profile normalization, incoming values are the DBC-decoded values: enum labels
+from `VAL_` when present, otherwise scaled physical numbers. A profile can add
+`normalize.enum` to remap enum labels before values are written to `car.state`.
 
 When multiple signals share a CAN frame, the transport receives one merged
 subscription request for that frame. Removing the last active signal for a CAN
@@ -254,10 +254,9 @@ const dispose = car.state.subscribe(() => {
 dispose();
 ```
 
-State keys are stored by the subscribed name. For physical DBC signals, that is
-the signal name. For `VAL_` enum-state subscriptions, that is the enum-state
-name, such as `REVERSE`. Property access also accepts common camelCase or
-snake_case variants by converting them to upper snake case.
+State keys are stored by the subscribed name. In profile-backed vehicles, that
+is the YAML `signals` or `queries` key. Property access also accepts common
+camelCase or snake_case variants by converting them to upper snake case.
 
 ## Transport
 

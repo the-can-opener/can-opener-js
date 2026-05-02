@@ -39,6 +39,19 @@ describe("DbcController", () => {
     ]);
   });
 
+  it("decodes DBC enum values as labels", () => {
+    const dbc = new DbcController();
+    dbc.load([testVehicleDbc]);
+    const frame = dbc.encodeSignal("DOOR_LOCK", 1);
+
+    expect(dbc.decodeFrame(frame)).toMatchObject([
+      {
+        name: "DOOR_LOCK",
+        value: "locked",
+      },
+    ]);
+  });
+
   it("loads universal PID DBC files from the profile source", () => {
     const dbc = new DbcController();
     dbc.load(universalPidProfile.dbcFiles);

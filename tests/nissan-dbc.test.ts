@@ -73,14 +73,14 @@ describe("Nissan Sentra DBC", () => {
     });
 
     expect(decoded).toMatchObject([
-      { name: "LOW_BEAMS", value: 1 },
-      { name: "HIGH_BEAMS", value: 1 },
-      { name: "LEFT_SIGNAL", value: 1 },
-      { name: "RIGHT_SIGNAL", value: 0 },
-      { name: "FRONT_LEFT_DOOR_OPEN", value: 1 },
-      { name: "FRONT_RIGHT_DOOR_OPEN", value: 0 },
-      { name: "REAR_LEFT_DOOR_OPEN", value: 0 },
-      { name: "REAR_RIGHT_DOOR_OPEN", value: 1 },
+      { name: "LOW_BEAMS", value: "on" },
+      { name: "HIGH_BEAMS", value: "on" },
+      { name: "LEFT_SIGNAL", value: "on" },
+      { name: "RIGHT_SIGNAL", value: "off" },
+      { name: "FRONT_LEFT_DOOR_OPEN", value: "open" },
+      { name: "FRONT_RIGHT_DOOR_OPEN", value: "closed" },
+      { name: "REAR_LEFT_DOOR_OPEN", value: "closed" },
+      { name: "REAR_RIGHT_DOOR_OPEN", value: "open" },
     ]);
   });
 
@@ -116,8 +116,10 @@ describe("Nissan Sentra DBC", () => {
     });
 
     expect(car.state.get<number>("SPEED")).toBe(20);
-    expect(car.state.get<number>("LEFT_SIGNAL")).toBe(1);
-    expect(car.state.get<number>("RIGHT_SIGNAL")).toBe(0);
+    expect(car.state.get<string>("LEFT_SIGNAL")).toBe("on");
+    expect(car.state.get<string>("RIGHT_SIGNAL")).toBe("off");
+    expect(car.state.get<string>("LOW_BEAMS")).toBe("on");
+    expect(car.state.get<string>("HIGH_BEAMS")).toBe("on");
   });
 
   it("runs the traced standardized body-control actions from the Nissan profile", async () => {
@@ -199,60 +201,60 @@ describe("Nissan Sentra DBC", () => {
       expect(emittedFrames[0]).toMatchObject({
         elapsedMs: 0,
         state: {
-          LOW_BEAMS: 0,
-          HIGH_BEAMS: 0,
-          LEFT_SIGNAL: 0,
-          RIGHT_SIGNAL: 0,
+          LOW_BEAMS: "off",
+          HIGH_BEAMS: "off",
+          LEFT_SIGNAL: "off",
+          RIGHT_SIGNAL: "off",
         },
       });
       expect(emittedFrames.at(-1)).toMatchObject({
         elapsedMs: stream.totalDurationMs,
         state: {
-          LOW_BEAMS: 0,
-          HIGH_BEAMS: 0,
-          LEFT_SIGNAL: 0,
-          RIGHT_SIGNAL: 0,
-          FRONT_LEFT_DOOR_OPEN: 0,
-          FRONT_RIGHT_DOOR_OPEN: 0,
-          REAR_LEFT_DOOR_OPEN: 0,
-          REAR_RIGHT_DOOR_OPEN: 0,
+          LOW_BEAMS: "off",
+          HIGH_BEAMS: "off",
+          LEFT_SIGNAL: "off",
+          RIGHT_SIGNAL: "off",
+          FRONT_LEFT_DOOR_OPEN: "closed",
+          FRONT_RIGHT_DOOR_OPEN: "closed",
+          REAR_LEFT_DOOR_OPEN: "closed",
+          REAR_RIGHT_DOOR_OPEN: "closed",
         },
       });
       expect(stateForData(emittedFrames, "0406002A00")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 0,
-        LEFT_SIGNAL: 0,
-        RIGHT_SIGNAL: 0,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "off",
+        LEFT_SIGNAL: "off",
+        RIGHT_SIGNAL: "off",
       });
       expect(stateForData(emittedFrames, "06060000000020")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 0,
-        LEFT_SIGNAL: 0,
-        RIGHT_SIGNAL: 0,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "off",
+        LEFT_SIGNAL: "off",
+        RIGHT_SIGNAL: "off",
       });
       expect(stateForData(emittedFrames, "06260000000020")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 0,
-        LEFT_SIGNAL: 1,
-        RIGHT_SIGNAL: 0,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "off",
+        LEFT_SIGNAL: "on",
+        RIGHT_SIGNAL: "off",
       });
       expect(stateForData(emittedFrames, "06460000000020")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 0,
-        LEFT_SIGNAL: 0,
-        RIGHT_SIGNAL: 1,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "off",
+        LEFT_SIGNAL: "off",
+        RIGHT_SIGNAL: "on",
       });
       expect(stateForData(emittedFrames, "040E000000")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 1,
-        LEFT_SIGNAL: 0,
-        RIGHT_SIGNAL: 0,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "on",
+        LEFT_SIGNAL: "off",
+        RIGHT_SIGNAL: "off",
       });
       expect(stateForData(emittedFrames, "06660000000020")).toMatchObject({
-        LOW_BEAMS: 1,
-        HIGH_BEAMS: 0,
-        LEFT_SIGNAL: 1,
-        RIGHT_SIGNAL: 1,
+        LOW_BEAMS: "on",
+        HIGH_BEAMS: "off",
+        LEFT_SIGNAL: "on",
+        RIGHT_SIGNAL: "on",
       });
 
       await car.unsubscribe([

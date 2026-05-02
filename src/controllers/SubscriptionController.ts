@@ -1,14 +1,18 @@
 import type { DbcController } from "../dbc/DbcController.js";
 import type { CanFrame, VehicleSignal, VehicleSignalState } from "../dbc/types.js";
+import { applyValueNormalization } from "../profile/normalize.js";
+import type { ProfileValueNormalization } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
 interface ActiveSubscription {
   state: VehicleSignalState;
+  normalize?: ProfileValueNormalization;
 }
 
 interface SubscriptionRequest {
   state: VehicleSignalState;
+  normalize?: ProfileValueNormalization;
 }
 
 export class SubscriptionController {
@@ -36,6 +40,7 @@ export class SubscriptionController {
     for (const request of requests) {
       const active: ActiveSubscription = {
         state: request.state,
+        ...(request.normalize !== undefined ? { normalize: request.normalize } : {}),
       };
 
       this.activeBySignal.set(request.state.name, active);
@@ -60,7 +65,8 @@ export class SubscriptionController {
           continue;
         }
 
-        this.state.update(active.state.name, decodeSubscriptionStateValue(active.state, value));
+        const stateValue = decodeSubscriptionStateValue(active.state, value);
+        this.state.update(active.state.name, applyValueNormalization(stateValue, active.normalize));
       }
     }
   }
@@ -151,6 +157,10 @@ export class SubscriptionController {
 function decodeSubscriptionStateValue(state: VehicleSignalState, value: unknown): unknown {
   if (state.enumValue === undefined) {
     return value;
+  }
+
+  if (typeof value === "string") {
+    return value === state.name ? 1 : 0;
   }
 
   return value === state.enumValue ? 1 : 0;

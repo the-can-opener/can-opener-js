@@ -62,6 +62,22 @@ namespace is the PID list below.
 
 `TPS` means throttle position.
 
+Standard signal values should use these script-facing domains. Numeric units
+come from the DBC. Enum labels come from DBC `VAL_` entries unless a profile
+uses `normalize.enum` to translate car-specific labels:
+
+- `SPEED`: number, typically `km/h`
+- `RPM`: number, typically `rpm`
+- `TPS`: number, typically `%`
+- `STEERING_ANGLE`: number, typically `deg`
+- `FUEL_LEVEL`: number, typically `%`
+- `LEFT_SIGNAL`, `RIGHT_SIGNAL`, `BRAKE_LIGHTS`, `LOW_BEAMS`, `HIGH_BEAMS`:
+  `"off"` or `"on"`
+
+If no `normalize` block is declared, the script-facing value is the DBC-decoded
+value. Signals with a matching DBC `VAL_` entry return the enum label; other
+numeric signals return the DBC-scaled physical number.
+
 ## Standard PID Keywords
 
 Profiles may support any subset of these basic PIDs:
@@ -354,6 +370,28 @@ signals:
       signal: STEERING_ANGLE
 ```
 
+Default value behavior:
+
+- If the DBC signal has a matching `VAL_` entry, state is updated with that enum
+  label.
+- Otherwise, state is updated with the DBC-scaled physical value.
+- Profile `normalize.enum` is optional and runs after DBC decode.
+
+Use `normalize.enum` only when the DBC labels need to be translated into the
+portable profile vocabulary:
+
+```yaml
+signals:
+  LOW_BEAMS:
+    monitor:
+      message: BODY_STATUS
+      signal: HEADLAMP_STATE
+    normalize:
+      enum:
+        inactive: off
+        active: on
+```
+
 Firmware mapping:
 
 - Configure monitor CAN IDs from DBC message references.
@@ -379,6 +417,26 @@ queries:
     dbc_mapping:
       message: OBD_Response_7E8
       signal: SPEED
+```
+
+Queries follow the same value rules as monitored signals. DBC enum labels are
+returned by default, numeric DBC signals return physical values by default, and
+optional `normalize.enum` remaps labels after decode:
+
+```yaml
+queries:
+  GEAR:
+    endpoint: obd
+    send: [0x22, 0x12, 0x34]
+    expect: [0x62, 0x12, 0x34]
+    dbc_mapping:
+      message: Body_Response
+      signal: TRANSMISSION_STATE
+    normalize:
+      enum:
+        P: park
+        R: reverse
+        D: drive
 ```
 
 Use `decoder` only for built-in non-DBC decoders:

@@ -11,6 +11,7 @@ import type {
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import type { ProfileValueNormalization } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
 
@@ -24,6 +25,7 @@ export interface VirtualVehicleInternals {
 
 interface ResolvedSubscriptionRequest {
   state: VehicleSignalState;
+  normalize?: ProfileValueNormalization;
 }
 
 export class VirtualVehicle {
@@ -138,6 +140,7 @@ export class VirtualVehicle {
           name: monitor.name,
           signal: this.dbc.resolveMessageSignal(monitor.message, monitor.signal),
         },
+        ...(monitor.normalize !== undefined ? { normalize: monitor.normalize } : {}),
       };
     }
 

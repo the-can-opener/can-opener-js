@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isCodecSignal, writeSignalValue } from "../src/dbc/codec.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
+import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import { testVehicleProfile } from "./fixtures.js";
 
@@ -87,6 +88,41 @@ describe("VirtualVehicle.subscribe", () => {
     expect(car.subscriptionCount()).toBe(0);
   });
 
+  it("uses DBC enum labels by default and profile normalization when declared", async () => {
+    const manager = new VirtualVehicleManager();
+    const defaultTransport = new MockTransport();
+    const defaultCar = await manager.connect({
+      id: "default-labels",
+      transport: defaultTransport,
+      profiles: [enumProfile({
+        labels: { off: "off", on: "on" },
+      })],
+    });
+
+    await defaultCar.subscribe("LOW_BEAMS");
+    defaultTransport.emitFrame(defaultCar.dbc.encodeSignal("HEADLAMP_STATE", 1));
+
+    expect(defaultCar.state.get<string>("LOW_BEAMS")).toBe("on");
+
+    const remapTransport = new MockTransport();
+    const remapCar = await manager.connect({
+      id: "remapped-labels",
+      transport: remapTransport,
+      profiles: [enumProfile({
+        labels: { off: "inactive", on: "active" },
+        normalize: {
+          inactive: "off",
+          active: "on",
+        },
+      })],
+    });
+
+    await remapCar.subscribe("LOW_BEAMS");
+    remapTransport.emitFrame(remapCar.dbc.encodeSignal("HEADLAMP_STATE", 1));
+
+    expect(remapCar.state.get<string>("LOW_BEAMS")).toBe("on");
+  });
+
   it("rejects PID signals for frame subscriptions", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
@@ -99,3 +135,44 @@ describe("VirtualVehicle.subscribe", () => {
     await expect(car.subscribe("VEHICLE_SPEED")).rejects.toThrow("Unknown vehicle signal: VEHICLE_SPEED");
   });
 });
+
+function enumProfile(options: {
+  labels: {
+    off: string;
+    on: string;
+  };
+  normalize?: Record<string, string>;
+}): VehicleProfileSource {
+  return {
+    name: "test/enum-profile.yaml",
+    content: [
+      "version: 1",
+      "",
+      "dbc:",
+      "  files:",
+      "    - path: signals.dbc",
+      "",
+      "signals:",
+      "  LOW_BEAMS:",
+      "    monitor:",
+      "      message: BODY_STATUS",
+      "      signal: HEADLAMP_STATE",
+      ...(options.normalize === undefined
+        ? []
+        : [
+            "    normalize:",
+            "      enum:",
+            ...Object.entries(options.normalize).map(([from, to]) => `        ${from}: ${to}`),
+          ]),
+    ].join("\n"),
+    dbcFiles: [{
+      name: "signals.dbc",
+      content: [
+        'VERSION ""',
+        "BO_ 700 BODY_STATUS: 8 ECU",
+        ' SG_ HEADLAMP_STATE : 0|1@1+ (1,0) [0|1] "" ECU',
+        `VAL_ 700 HEADLAMP_STATE 0 "${options.labels.off}" 1 "${options.labels.on}";`,
+      ].join("\n"),
+    }],
+  };
+}

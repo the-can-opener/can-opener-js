@@ -9,6 +9,7 @@ export interface CodecSignal {
   scale?: number;
   offset?: number;
   valueType?: "number" | "ascii" | "bytes";
+  enumValues?: Record<number, string>;
 }
 
 const DEFAULT_FRAME_BYTES = 8;
@@ -28,6 +29,11 @@ export function decodeSignalValue(
   const unsigned = readRaw(frame.data, signal);
   const raw =
     signal.signed === true ? toSigned(unsigned, signal.length) : unsigned;
+  const enumValue = signal.enumValues?.[raw];
+  if (enumValue !== undefined) {
+    return enumValue;
+  }
+
   return raw * (signal.scale ?? 1) + (signal.offset ?? 0);
 }
 

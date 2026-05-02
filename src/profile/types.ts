@@ -38,6 +38,10 @@ export interface BuiltInDecoderRef {
 
 export type QueryDecoder = DbcDecoderRef | BuiltInDecoderRef;
 
+export interface ProfileValueNormalization {
+  enum?: Record<string, string>;
+}
+
 export interface RequestStep {
   endpoint?: string;
   send: Uint8Array;
@@ -51,6 +55,7 @@ export interface ProfileQuery {
   expect?: ExpectPattern;
   decoder?: QueryDecoder;
   length?: number;
+  normalize?: ProfileValueNormalization;
 }
 
 export interface ProfileAction {
@@ -63,6 +68,7 @@ export interface ProfileMonitorSignal {
   name: string;
   message: string;
   signal: string;
+  normalize?: ProfileValueNormalization;
 }
 
 export interface LoadedVehicleProfile {
