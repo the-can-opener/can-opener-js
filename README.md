@@ -110,6 +110,9 @@ Raw DBC-only loading is still supported for simple frame subscriptions and
 legacy tests. In profile-backed vehicles, executable names come from YAML
 `queries`, `actions`, and `signals` declarations.
 
+See `docs/vehicle-profile-ble-spec.md` for the full YAML profile, DBC, standard
+capability keyword, PID, and BLE packet specification.
+
 DBC `VAL_` entries can also expose normalized state names for enum-like signal
 values. This is useful when one physical signal encodes mutually exclusive
 states, but the app wants to subscribe to those states by keyword:
