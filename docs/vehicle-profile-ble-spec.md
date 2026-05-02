@@ -544,17 +544,16 @@ is inclusive.
 ### Request Notify Response
 
 ```text
-[0]     seq
-[1]     status
-[2..5]  response_can_id
-[6..7]  total_len
-[8]     chunk_len
-[9..]   payload chunk
+[0]      seq
+[1]      status
+[2..5]   response_can_id
+[6]      payload_len
+[7..]    payload
 ```
 
-`total_len` is the total logical response payload length. `chunk_len` is the
-number of payload bytes carried in this notification. Multi-notification
-responses reuse the same `seq`.
+The response is always one BLE notification. `payload_len` is the number of
+valid payload bytes in this notification. The maximum payload is limited by the
+BLE characteristic payload size, currently 244 bytes.
 
 ## Final Rule
 
