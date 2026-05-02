@@ -57,6 +57,8 @@ namespace is the PID list below.
 - `FUEL_LEVEL`
 - `TPS`
 - `STEERING_ANGLE`
+- `LOW_BEAMS`
+- `HIGH_BEAMS`
 
 `TPS` means throttle position.
 

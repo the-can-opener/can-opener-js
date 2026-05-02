@@ -9,24 +9,33 @@ import lightsCsv from "./fixtures/lights.csv?raw";
 const nissanDbc = nissanSentraDbc;
 
 describe("Nissan Sentra DBC", () => {
-  it("parses steering and lights messages from the uploaded DBC", () => {
+  it("parses the supplied Nissan broadcast and body-control messages", () => {
     const parsed = new DbcParser().parse(nissanDbc);
 
-    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages).toHaveLength(17);
+    expect(parsed.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 505, name: "ENGINE_1", size: 8, transmitter: "XXX" }),
+      expect.objectContaining({ id: 640, name: "SPEED", size: 8, transmitter: "XXX" }),
+      expect.objectContaining({ id: 852, name: "SPEED_BRAKE", size: 8, transmitter: "XXX" }),
+      expect.objectContaining({ id: 1893, name: "BODY_RESPONSE_765", size: 8, transmitter: "BCM" }),
+      expect.objectContaining({ id: 1549, name: "LIGHTS_STATUS_60D", size: 8, transmitter: "BCM" }),
+    ]));
     expect(parsed.messages[0]).toMatchObject({
       id: 2,
       name: "STEERING",
       size: 5,
       transmitter: "XXX",
     });
-    expect(parsed.messages[1]).toMatchObject({
-      id: 1549,
-      name: "LIGHTS_STATUS_60D",
-      size: 8,
-      transmitter: "BCM",
-    });
-    expect(parsed.messages[1]?.signals).toHaveLength(8);
-    expect(parsed.messages[1]?.signals).toEqual(expect.arrayContaining([
+
+    const speedBrake = parsed.messages.find((message) => message.name === "SPEED_BRAKE");
+    expect(speedBrake?.signals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "BRAKE_LIGHTS", startBit: 52, length: 1 }),
+      expect.objectContaining({ name: "SPEED_MPH", startBit: 7, length: 16 }),
+    ]));
+
+    const lights = parsed.messages.find((message) => message.name === "LIGHTS_STATUS_60D");
+    expect(lights?.signals).toHaveLength(8);
+    expect(lights?.signals).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "LEFT_SIGNAL", startBit: 13, length: 1 }),
       expect.objectContaining({ name: "RIGHT_SIGNAL", startBit: 14, length: 1 }),
     ]));
@@ -47,15 +56,14 @@ describe("Nissan Sentra DBC", () => {
     const dbc = new DbcController();
     dbc.load([nissanDbc]);
 
-    expect(dbc.resolve("HEADLIGHTS")).toMatchObject({
+    expect(dbc.resolve("LOW_BEAMS")).toMatchObject({
       protocol: "frame",
       canId: 1549,
-      startBit: 1,
-      length: 2,
+      startBit: 2,
+      length: 1,
       enumValues: {
         0: "off",
-        2: "headlights_on",
-        3: "fog_lights_on",
+        1: "on",
       },
     });
 
@@ -65,8 +73,8 @@ describe("Nissan Sentra DBC", () => {
     });
 
     expect(decoded).toMatchObject([
-      { name: "HEADLIGHTS", value: 2 },
-      { name: "HIGH_BEAM", value: 1 },
+      { name: "LOW_BEAMS", value: 1 },
+      { name: "HIGH_BEAMS", value: 1 },
       { name: "LEFT_SIGNAL", value: 1 },
       { name: "RIGHT_SIGNAL", value: 0 },
       { name: "FRONT_LEFT_DOOR_OPEN", value: 1 },
@@ -76,7 +84,7 @@ describe("Nissan Sentra DBC", () => {
     ]);
   });
 
-  it("loads the paired Nissan profile with its DBC monitor signals", async () => {
+  it("loads the paired Nissan profile with standardized DBC monitor signals", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -85,18 +93,63 @@ describe("Nissan Sentra DBC", () => {
       profiles: [nissanSentraProfile],
     });
 
-    await expect(car.subscribe(["HEADLIGHTS", "LEFT_SIGNAL", "RIGHT_SIGNAL", "FRONT_LEFT_DOOR_OPEN"])).resolves.toBe(true);
-    expect(Array.from(transport.monitorCanIds)).toEqual([1549]);
+    await expect(car.subscribe([
+      "SPEED",
+      "RPM",
+      "TPS",
+      "STEERING_ANGLE",
+      "BRAKE_LIGHTS",
+      "LOW_BEAMS",
+      "HIGH_BEAMS",
+      "LEFT_SIGNAL",
+      "RIGHT_SIGNAL",
+    ])).resolves.toBe(true);
+    expect(Array.from(transport.monitorCanIds)).toEqual([640, 505, 574, 2, 852, 1549]);
 
     transport.emitFrame({
       canId: 1549,
       data: Uint8Array.of(0b0100_1100, 0b0010_1000, 0, 0, 0, 0, 0, 0),
     });
+    transport.emitFrame({
+      canId: 640,
+      data: Uint8Array.of(0, 0, 0, 0, 0xD0, 0x07, 0, 0),
+    });
 
-    expect(car.state.get<number>("HEADLIGHTS")).toBe(2);
+    expect(car.state.get<number>("SPEED")).toBe(20);
     expect(car.state.get<number>("LEFT_SIGNAL")).toBe(1);
     expect(car.state.get<number>("RIGHT_SIGNAL")).toBe(0);
-    expect(car.state.get<number>("FRONT_LEFT_DOOR_OPEN")).toBe(1);
+  });
+
+  it("runs the traced standardized body-control actions from the Nissan profile", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "sentra",
+      transport,
+      profiles: [nissanSentraProfile],
+    });
+
+    scriptBodyActionResponses(transport);
+
+    await expect(car.action("HORN")).resolves.toBe(true);
+    await expect(car.action("LOCK")).resolves.toBe(true);
+    await expect(car.action("UNLOCK")).resolves.toBe(true);
+
+    expect(transport.requests.map((request) => ({
+      canId: request.txFrame.canId,
+      data: Array.from(request.txFrame.data),
+      expectCanResponse: request.expectCanResponse,
+    }))).toEqual([
+      { canId: 0x745, data: [0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x02, 0x10, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x04, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x02, 0x10, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x02, 0x10, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00], expectCanResponse: true },
+      { canId: 0x745, data: [0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00], expectCanResponse: true },
+    ]);
   });
 
   it("streams captured lights CSV frames at recorded timestamps into vehicle state", async () => {
@@ -113,8 +166,8 @@ describe("Nissan Sentra DBC", () => {
 
     try {
       await expect(car.subscribe([
-        "HEADLIGHTS",
-        "HIGH_BEAM",
+        "LOW_BEAMS",
+        "HIGH_BEAMS",
         "LEFT_SIGNAL",
         "RIGHT_SIGNAL",
         "FRONT_LEFT_DOOR_OPEN",
@@ -146,8 +199,8 @@ describe("Nissan Sentra DBC", () => {
       expect(emittedFrames[0]).toMatchObject({
         elapsedMs: 0,
         state: {
-          HEADLIGHTS: 0,
-          HIGH_BEAM: 0,
+          LOW_BEAMS: 0,
+          HIGH_BEAMS: 0,
           LEFT_SIGNAL: 0,
           RIGHT_SIGNAL: 0,
         },
@@ -155,8 +208,8 @@ describe("Nissan Sentra DBC", () => {
       expect(emittedFrames.at(-1)).toMatchObject({
         elapsedMs: stream.totalDurationMs,
         state: {
-          HEADLIGHTS: 0,
-          HIGH_BEAM: 0,
+          LOW_BEAMS: 0,
+          HIGH_BEAMS: 0,
           LEFT_SIGNAL: 0,
           RIGHT_SIGNAL: 0,
           FRONT_LEFT_DOOR_OPEN: 0,
@@ -166,45 +219,45 @@ describe("Nissan Sentra DBC", () => {
         },
       });
       expect(stateForData(emittedFrames, "0406002A00")).toMatchObject({
-        HEADLIGHTS: 2,
-        HIGH_BEAM: 0,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 0,
         LEFT_SIGNAL: 0,
         RIGHT_SIGNAL: 0,
       });
       expect(stateForData(emittedFrames, "06060000000020")).toMatchObject({
-        HEADLIGHTS: 3,
-        HIGH_BEAM: 0,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 0,
         LEFT_SIGNAL: 0,
         RIGHT_SIGNAL: 0,
       });
       expect(stateForData(emittedFrames, "06260000000020")).toMatchObject({
-        HEADLIGHTS: 3,
-        HIGH_BEAM: 0,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 0,
         LEFT_SIGNAL: 1,
         RIGHT_SIGNAL: 0,
       });
       expect(stateForData(emittedFrames, "06460000000020")).toMatchObject({
-        HEADLIGHTS: 3,
-        HIGH_BEAM: 0,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 0,
         LEFT_SIGNAL: 0,
         RIGHT_SIGNAL: 1,
       });
       expect(stateForData(emittedFrames, "040E000000")).toMatchObject({
-        HEADLIGHTS: 2,
-        HIGH_BEAM: 1,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 1,
         LEFT_SIGNAL: 0,
         RIGHT_SIGNAL: 0,
       });
       expect(stateForData(emittedFrames, "06660000000020")).toMatchObject({
-        HEADLIGHTS: 3,
-        HIGH_BEAM: 0,
+        LOW_BEAMS: 1,
+        HIGH_BEAMS: 0,
         LEFT_SIGNAL: 1,
         RIGHT_SIGNAL: 1,
       });
 
       await car.unsubscribe([
-        "HEADLIGHTS",
-        "HIGH_BEAM",
+        "LOW_BEAMS",
+        "HIGH_BEAMS",
         "LEFT_SIGNAL",
         "RIGHT_SIGNAL",
         "FRONT_LEFT_DOOR_OPEN",
@@ -313,9 +366,32 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+function scriptBodyActionResponses(transport: MockTransport): void {
+  transport.scriptPidResponse(
+    { canId: 0x745, data: Uint8Array.of(0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00) },
+    Uint8Array.of(0x02, 0x50, 0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+  );
+  transport.scriptPidResponse(
+    { canId: 0x745, data: Uint8Array.of(0x02, 0x10, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00) },
+    Uint8Array.of(0x02, 0x50, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+  );
+  transport.scriptPidResponse(
+    { canId: 0x745, data: Uint8Array.of(0x04, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00) },
+    Uint8Array.of(0x03, 0x70, 0x30, 0x01, 0xFF, 0xFF, 0xFF, 0xFF),
+  );
+  transport.scriptPidResponse(
+    { canId: 0x745, data: Uint8Array.of(0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00) },
+    Uint8Array.of(0x03, 0x70, 0x38, 0x01, 0xFF, 0xFF, 0xFF, 0xFF),
+  );
+  transport.scriptPidResponse(
+    { canId: 0x745, data: Uint8Array.of(0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00) },
+    Uint8Array.of(0x03, 0x70, 0x38, 0x02, 0xFF, 0xFF, 0xFF, 0xFF),
+  );
+}
+
 const normalizedStateKeys = [
-  "HEADLIGHTS",
-  "HIGH_BEAM",
+  "LOW_BEAMS",
+  "HIGH_BEAMS",
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
   "FRONT_LEFT_DOOR_OPEN",
@@ -326,8 +402,15 @@ const normalizedStateKeys = [
 
 const normalizedNissanSignalNames = [
   "STEERING_ANGLE",
-  "HEADLIGHTS",
-  "HIGH_BEAM",
+  "SPEED",
+  "SPEED_MPH",
+  "RPM",
+  "TPS",
+  "BRAKE_LIGHTS",
+  "ECT",
+  "OIL_TEMP",
+  "LOW_BEAMS",
+  "HIGH_BEAMS",
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
   "FRONT_LEFT_DOOR_OPEN",
