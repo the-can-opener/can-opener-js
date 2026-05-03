@@ -614,9 +614,8 @@ Status codes:
 
 ```text
 [0]     opcode = 0x81
-[1..2]  snapshot_seq u16
-[3]     frame_count
-[4..]   repeated frames, 13 bytes each:
+[1]     frame_count
+[2..]   repeated frames, 13 bytes each:
           u32 can_id
           u8  dlc
           u8[8] data
