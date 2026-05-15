@@ -1,14 +1,13 @@
 # can-opener-js
 
-React-style vehicle state for cars. `can-opener-js` gives TypeScript apps a
+React-style vehicle state management for cars. `can-opener-js` gives TypeScript apps a
 virtual vehicle object that monitors the state of a car through named signals and
-uses named actions to control that state, without forcing the app to speak raw
-CAN. It abstracts DBC files, CAN IDs, byte order, scaling, masks, and bit-level
-signal packing behind named vehicle state.
+uses named actions to control that state. It abstracts DBC files, CAN IDs, byte order,
+scaling, masks, and bit-level signal packing behind named vehicle state.
 
 Under the hood, it is a signal-first library for modeling virtual vehicles on
-top of DBC metadata and a pluggable CAN transport. Each connected vehicle owns
-its own DBC bindings, transport, controllers, APIs, and state, so multi-vehicle
+top of a interpreter layer. Can Opener interfaces with the OBD device.
+Each connected vehicle owns its own vehicle profile, transport, controllers, APIs, and state, so multi-vehicle
 apps do not need globals or shared registries. That makes vehicle scripts
 portable: the same code can run across different cars by swapping the profile,
 DBC files, and transport.
