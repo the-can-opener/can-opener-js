@@ -646,8 +646,9 @@ the CAN frame and does not send a BLE notification.
 ```text
 [0]       seq
 [1]       flags
-            bit0 = expect_can_response
-            bit1..7 reserved
+          bit0 = expect_can_response
+          bit1 = tx_can_id_extended
+          bit2..7 reserved = 0
 [2..5]    tx_can_id
 [6..9]    response_id_start
 [10..13]  response_id_end
