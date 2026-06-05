@@ -425,6 +425,10 @@ queries:
       signal: SPEED
 ```
 
+Generated profiles may also use `endpoints: [obd_29, obd_11]` for queries that
+can run through more than one transport target. The current loader accepts this
+form and uses the first endpoint in the list.
+
 Queries follow the same value rules as monitored signals. DBC enum labels are
 returned by default, numeric DBC signals return physical values by default, and
 optional `normalize.enum` remaps labels after decode:

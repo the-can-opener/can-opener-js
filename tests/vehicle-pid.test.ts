@@ -104,6 +104,36 @@ describe("VirtualVehicle.query", () => {
     });
   });
 
+  it("accepts query endpoint lists from generated profiles", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [{
+        ...universalPidProfile,
+        content: universalPidProfile.content.replace(
+          "RPM: { endpoint: obd,",
+          "RPM: { endpoints: [obd_29, obd_11],",
+        ).replace(
+          "  obd:\n    request_id: 0x7DF\n    response_ids:\n      - range: [0x7E8, 0x7EF]\n    timeout_ms: 500",
+          "  obd_29:\n    request_id: 0x18DB33F1\n    response_ids:\n      - range: [0x18DAF100, 0x18DAF1FF]\n    timeout_ms: 500\n\n  obd_11:\n    request_id: 0x7DF\n    response_ids:\n      - range: [0x7E8, 0x7EF]\n    timeout_ms: 500",
+        ),
+      }],
+    });
+    const response = car.dbc.encodeSignal("RPM", 3000);
+    response.data[1] = 0x41;
+    response.data[2] = 0x0c;
+
+    transport.scriptPidResponse(requestFrame(0x01, 0x0c, 0x18db33f1), response.data);
+
+    await expect(car.query<number>("RPM")).resolves.toBe(3000);
+    expect(transport.requests[0]).toMatchObject({
+      responseIdStart: 0x18daf100,
+      responseIdEnd: 0x18daf1ff,
+    });
+  });
+
   it("polls query subscriptions and updates vehicle state", async () => {
     vi.useFakeTimers();
     try {

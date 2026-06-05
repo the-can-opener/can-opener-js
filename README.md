@@ -223,6 +223,9 @@ transport receives a raw request frame through `sendRequest()` with
 `expectCanResponse: true`. The response is validated against `expect` and
 decoded by the referenced DBC signal or built-in decoder.
 
+Generated profiles may declare `endpoints: [...]` on a query. The loader accepts
+that form and uses the first endpoint in the list for the current request.
+
 Calling `query()` for a name not declared in the profile throws an unknown
 signal error.
 

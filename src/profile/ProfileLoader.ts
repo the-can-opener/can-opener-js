@@ -51,6 +51,7 @@ interface RawSignal {
 
 interface RawQuery {
   endpoint?: unknown;
+  endpoints?: unknown;
   send?: unknown[];
   expect?: unknown;
   dbc_mapping?: unknown;
@@ -145,13 +146,26 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
   const decoder = normalizeQueryDecoder(name, raw);
   return {
     name,
-    endpoint: readString(raw.endpoint, `queries.${name}.endpoint`),
+    endpoint: readQueryEndpoint(name, raw),
     send: Uint8Array.from(readByteArray(raw.send, `queries.${name}.send`)),
     ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `queries.${name}.expect`) } : {}),
     ...(decoder !== undefined ? { decoder } : {}),
     ...(raw.length !== undefined ? { length: readNumber(raw.length, `queries.${name}.length`) } : {}),
     ...(raw.normalize !== undefined ? { normalize: normalizeValueNormalization(raw.normalize, `queries.${name}.normalize`) } : {}),
   };
+}
+
+function readQueryEndpoint(name: string, raw: RawQuery): string {
+  if (raw.endpoint !== undefined && raw.endpoints !== undefined) {
+    throw new VirtualVehicleError(`queries.${name} cannot declare both endpoint and endpoints`);
+  }
+  if (raw.endpoints !== undefined) {
+    if (!Array.isArray(raw.endpoints) || raw.endpoints.length === 0) {
+      throw new VirtualVehicleError(`queries.${name}.endpoints must contain at least one endpoint`);
+    }
+    return readString(raw.endpoints[0], `queries.${name}.endpoints[0]`);
+  }
+  return readString(raw.endpoint, `queries.${name}.endpoint`);
 }
 
 function normalizeAction(name: string, raw: RawAction, sequences: Record<string, RawSequence>): ProfileAction {
