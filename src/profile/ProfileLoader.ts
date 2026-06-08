@@ -1,6 +1,8 @@
 import { parse } from "yaml";
 import { VirtualVehicleError } from "../errors.js";
 import type {
+  ActionEncodeField,
+  ActionInputSpec,
   BuiltInDecoderRef,
   DbcDecoderRef,
   ExpectPattern,
@@ -61,7 +63,9 @@ interface RawQuery {
 
 interface RawAction {
   endpoint?: unknown;
+  inputs?: unknown;
   send?: unknown[];
+  encode?: unknown;
   expect?: unknown;
   steps?: RawStep[];
 }
@@ -70,6 +74,7 @@ type RawStep = {
   endpoint?: unknown;
   ref?: unknown;
   send?: unknown[];
+  encode?: unknown;
   expect?: unknown;
 };
 
@@ -155,17 +160,21 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
 }
 
 function normalizeAction(name: string, raw: RawAction, sequences: Record<string, RawSequence>): ProfileAction {
+  const inputs = normalizeActionInputs(raw.inputs, `actions.${name}.inputs`);
+  const inputNames = new Set((inputs ?? []).map((input) => input.name));
   const steps = raw.steps !== undefined
-    ? expandSteps(raw.steps, sequences, raw.endpoint)
+    ? expandSteps(raw.steps, sequences, raw.endpoint, inputNames, `actions.${name}.steps`)
     : [{
         ...(raw.endpoint !== undefined ? { endpoint: readString(raw.endpoint, `actions.${name}.endpoint`) } : {}),
         send: Uint8Array.from(readByteArray(raw.send, `actions.${name}.send`)),
+        ...(raw.encode !== undefined ? { encode: normalizeEncode(raw.encode, `actions.${name}.encode`, inputNames) } : {}),
         ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `actions.${name}.expect`) } : {}),
       }];
 
   return {
     name,
     ...(raw.endpoint !== undefined ? { endpoint: readString(raw.endpoint, `actions.${name}.endpoint`) } : {}),
+    ...(inputs !== undefined ? { inputs } : {}),
     steps,
   };
 }
@@ -198,11 +207,14 @@ function expandSteps(
   rawSteps: RawStep[],
   sequences: Record<string, RawSequence>,
   inheritedEndpoint: unknown,
+  inputNames: ReadonlySet<string>,
+  path: string,
   seen: string[] = [],
 ): RequestStep[] {
-  return rawSteps.flatMap((step) => {
+  return rawSteps.flatMap((step, index) => {
+    const stepPath = `${path}[${index}]`;
     if (step.ref !== undefined) {
-      const ref = readString(step.ref, "steps.ref").replace(/^sequences\./u, "");
+      const ref = readString(step.ref, `${stepPath}.ref`).replace(/^sequences\./u, "");
       if (seen.includes(ref)) {
         throw new VirtualVehicleError(`Circular sequence reference: ${[...seen, ref].join(" -> ")}`);
       }
@@ -210,17 +222,196 @@ function expandSteps(
       if (sequence === undefined) {
         throw new VirtualVehicleError(`Unknown sequence reference: ${ref}`);
       }
-      return expandSteps(sequence.steps ?? [], sequences, sequence.endpoint ?? inheritedEndpoint, [...seen, ref]);
+      return expandSteps(
+        sequence.steps ?? [],
+        sequences,
+        sequence.endpoint ?? inheritedEndpoint,
+        inputNames,
+        `sequences.${ref}.steps`,
+        [...seen, ref],
+      );
     }
 
     return [{
       ...(step.endpoint !== undefined || inheritedEndpoint !== undefined
-        ? { endpoint: readString(step.endpoint ?? inheritedEndpoint, "steps.endpoint") }
+        ? { endpoint: readString(step.endpoint ?? inheritedEndpoint, `${stepPath}.endpoint`) }
         : {}),
-      send: Uint8Array.from(readByteArray(step.send, "steps.send")),
-      ...(step.expect !== undefined ? { expect: normalizeExpect(step.expect, "steps.expect") } : {}),
+      send: Uint8Array.from(readByteArray(step.send, `${stepPath}.send`)),
+      ...(step.encode !== undefined ? { encode: normalizeEncode(step.encode, `${stepPath}.encode`, inputNames) } : {}),
+      ...(step.expect !== undefined ? { expect: normalizeExpect(step.expect, `${stepPath}.expect`) } : {}),
     }];
   });
+}
+
+function normalizeActionInputs(raw: unknown, path: string): ActionInputSpec[] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+
+  return Object.entries(raw).map(([name, value]) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new VirtualVehicleError(`${path}.${name} must be an object`);
+    }
+    const input = value as {
+      type?: unknown;
+      required?: unknown;
+      min?: unknown;
+      max?: unknown;
+      step?: unknown;
+      unit?: unknown;
+      length?: unknown;
+    };
+    const type = readActionInputType(input.type, `${path}.${name}.type`);
+    const normalized: ActionInputSpec = {
+      name,
+      type,
+      required: input.required === true,
+      ...(input.min !== undefined ? { min: readNumber(input.min, `${path}.${name}.min`) } : {}),
+      ...(input.max !== undefined ? { max: readNumber(input.max, `${path}.${name}.max`) } : {}),
+      ...(input.step !== undefined ? { step: readPositiveNumber(input.step, `${path}.${name}.step`) } : {}),
+      ...(input.unit !== undefined ? { unit: readString(input.unit, `${path}.${name}.unit`) } : {}),
+      ...(input.length !== undefined ? { length: readPositiveInteger(input.length, `${path}.${name}.length`) } : {}),
+    };
+    if (normalized.min !== undefined && normalized.max !== undefined && normalized.min > normalized.max) {
+      throw new VirtualVehicleError(`${path}.${name}.min cannot be greater than max`);
+    }
+    if (type === "string" && normalized.length !== undefined && normalized.length > 8) {
+      throw new VirtualVehicleError(`${path}.${name}.length must fit within an 8-byte CAN frame`);
+    }
+    return normalized;
+  });
+}
+
+function normalizeEncode(raw: unknown, path: string, inputNames: ReadonlySet<string>): ActionEncodeField[] {
+  if (!Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an array`);
+  }
+  return raw.map((field, index) => normalizeEncodeField(field, `${path}[${index}]`, inputNames));
+}
+
+function normalizeEncodeField(raw: unknown, path: string, inputNames: ReadonlySet<string>): ActionEncodeField {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+  const field = raw as {
+    input?: unknown;
+    as?: unknown;
+    at?: unknown;
+    start_bit?: unknown;
+    length?: unknown;
+    signed?: unknown;
+    byte_order?: unknown;
+    scale?: unknown;
+    offset?: unknown;
+    pad?: unknown;
+  };
+  const input = readString(field.input, `${path}.input`);
+  if (!inputNames.has(input)) {
+    throw new VirtualVehicleError(`${path}.input references undeclared action input ${input}`);
+  }
+
+  if (field.as === "ascii") {
+    if (field.start_bit !== undefined) {
+      throw new VirtualVehicleError(`${path}.start_bit is not supported for ascii fields`);
+    }
+    const startByte = readByteIndex(field.at, `${path}.at`);
+    const length = readPositiveInteger(field.length, `${path}.length`);
+    if (startByte + length > 8) {
+      throw new VirtualVehicleError(`${path} exceeds 8-byte CAN frame bounds`);
+    }
+    return {
+      type: "ascii",
+      input,
+      startByte,
+      length,
+      pad: field.pad !== undefined ? readByte(field.pad, `${path}.pad`) : 0,
+    };
+  }
+
+  const byteOrder = normalizeByteOrder(field.byte_order, `${path}.byte_order`);
+  const placement = normalizeNumericPlacement(field, path, byteOrder);
+  return {
+    type: "numeric",
+    input,
+    ...placement,
+    scale: field.scale !== undefined ? readNumber(field.scale, `${path}.scale`) : 1,
+    offset: field.offset !== undefined ? readNumber(field.offset, `${path}.offset`) : 0,
+    byteOrder,
+  };
+}
+
+function normalizeNumericPlacement(
+  field: {
+    as?: unknown;
+    at?: unknown;
+    start_bit?: unknown;
+    length?: unknown;
+    signed?: unknown;
+  },
+  path: string,
+  byteOrder: "big" | "little",
+): { startBit: number; length: number; signed: boolean } {
+  const hasBytePlacement = field.as !== undefined || field.at !== undefined;
+  const hasBitPlacement = field.start_bit !== undefined || field.length !== undefined || field.signed !== undefined;
+  if (hasBytePlacement && hasBitPlacement) {
+    throw new VirtualVehicleError(`${path} cannot mix as/at with start_bit/length placement`);
+  }
+
+  if (hasBytePlacement) {
+    const numericType = readNumericEncodeType(field.as, `${path}.as`);
+    const startByte = readByteIndex(field.at, `${path}.at`);
+    const length = numericType.width;
+    const startBit = byteOrder === "big" ? startByte * 8 + 7 : startByte * 8;
+    assertFieldFits(startBit, length, path);
+    return {
+      startBit,
+      length,
+      signed: numericType.signed,
+    };
+  }
+
+  const startBit = readBitIndex(field.start_bit, `${path}.start_bit`);
+  const length = readPositiveInteger(field.length, `${path}.length`);
+  assertFieldFits(startBit, length, path);
+  return {
+    startBit,
+    length,
+    signed: field.signed === true,
+  };
+}
+
+function readActionInputType(raw: unknown, path: string): ActionInputSpec["type"] {
+  if (raw === "number" || raw === "integer" || raw === "string") {
+    return raw;
+  }
+  throw new VirtualVehicleError(`${path} must be number, integer, or string`);
+}
+
+function readNumericEncodeType(raw: unknown, path: string): { width: number; signed: boolean } {
+  if (typeof raw !== "string") {
+    throw new VirtualVehicleError(`${path} must be a numeric encode type`);
+  }
+  const match = /^(u?int)(8|16|32)$/u.exec(raw);
+  if (match === null) {
+    throw new VirtualVehicleError(`${path} must be uint8, uint16, uint32, int8, int16, or int32`);
+  }
+  return {
+    width: Number(match[2]),
+    signed: match[1] === "int",
+  };
+}
+
+function normalizeByteOrder(raw: unknown, path: string): "big" | "little" {
+  if (raw === undefined || raw === "big_endian" || raw === "big") {
+    return "big";
+  }
+  if (raw === "little_endian" || raw === "little") {
+    return "little";
+  }
+  throw new VirtualVehicleError(`${path} must be big_endian or little_endian`);
 }
 
 function normalizeQueryDecoder(name: string, raw: RawQuery): DbcDecoderRef | BuiltInDecoderRef | undefined {
@@ -317,6 +508,55 @@ function readByte(raw: unknown, path: string): number {
     throw new VirtualVehicleError(`${path} must be a byte between 0 and 255`);
   }
   return value;
+}
+
+function readByteIndex(raw: unknown, path: string): number {
+  const value = readNonNegativeInteger(raw, path);
+  if (value > 7) {
+    throw new VirtualVehicleError(`${path} must be a byte index between 0 and 7`);
+  }
+  return value;
+}
+
+function readBitIndex(raw: unknown, path: string): number {
+  const value = readNonNegativeInteger(raw, path);
+  if (value > 63) {
+    throw new VirtualVehicleError(`${path} must be a bit index between 0 and 63`);
+  }
+  return value;
+}
+
+function readPositiveInteger(raw: unknown, path: string): number {
+  const value = readNonNegativeInteger(raw, path);
+  if (value === 0) {
+    throw new VirtualVehicleError(`${path} must be greater than 0`);
+  }
+  return value;
+}
+
+function readNonNegativeInteger(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new VirtualVehicleError(`${path} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function readPositiveNumber(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (value <= 0) {
+    throw new VirtualVehicleError(`${path} must be greater than 0`);
+  }
+  return value;
+}
+
+function assertFieldFits(startBit: number, length: number, path: string): void {
+  if (length <= 0 || length > 52) {
+    throw new VirtualVehicleError(`${path}.length must be between 1 and 52 bits`);
+  }
+  if (startBit + length > 64) {
+    throw new VirtualVehicleError(`${path} exceeds 8-byte CAN frame bounds`);
+  }
 }
 
 function readNumber(raw: unknown, path: string): number {

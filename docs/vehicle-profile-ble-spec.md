@@ -523,6 +523,156 @@ actions:
         expect: [0x70, 0x30, 0x01]
 ```
 
+### Action Inputs
+
+Actions may declare typed user inputs and encode them into request bytes. This is
+optional. Actions with no `inputs` and no `encode` fields send the literal
+`send` bytes exactly as declared.
+
+Action input encoding uses a DBC-style physical-value relationship:
+
+```text
+physical = raw * scale + offset
+```
+
+Since actions start from a script-provided physical input value, the encoder
+uses the inverse:
+
+```text
+raw = round((input - offset) / scale)
+```
+
+Keep this metadata in YAML, not DBC. DBC describes received-frame decoding.
+Action input encoding describes user input to request payload bytes.
+
+The `send` array is always the full fixed-layout request template. `encode`
+fields patch values into that template in place; they never append bytes or
+change the DLC.
+
+Byte-level placement is the common form:
+
+```yaml
+actions:
+  SET_TEMPERATURE:
+    endpoint: hvac
+    inputs:
+      temperature:
+        type: number
+        required: true
+        min: 16
+        max: 30
+        step: 0.5
+        unit: celsius
+    send: [0x30, 0x50, 0x00]
+    encode:
+      - input: temperature
+        as: uint8
+        at: 2
+        scale: 0.5
+        offset: 0
+```
+
+Calling `vehicle.action("SET_TEMPERATURE", { temperature: 21.5 })` encodes:
+
+```text
+raw = round((21.5 - 0) / 0.5) = 43 = 0x2B
+final bytes = 30 50 2B
+```
+
+Integer inputs use the same model:
+
+```yaml
+actions:
+  SET_FAN_SPEED:
+    endpoint: hvac
+    inputs:
+      speed:
+        type: integer
+        required: true
+        min: 0
+        max: 7
+        unit: level
+    send: [0x30, 0x44, 0x00]
+    encode:
+      - input: speed
+        as: uint8
+        at: 2
+        scale: 1
+        offset: 0
+```
+
+Multi-byte numeric values declare byte order:
+
+```yaml
+actions:
+  SET_CHARGE_LIMIT:
+    endpoint: body
+    inputs:
+      limit:
+        type: integer
+        required: true
+        min: 50
+        max: 100
+        unit: percent
+    send: [0x30, 0x91, 0x00, 0x00]
+    encode:
+      - input: limit
+        as: uint16
+        at: 2
+        byte_order: big_endian
+        scale: 1
+        offset: 0
+```
+
+An input of `80` becomes `raw = 80`, encoded as `00 50`, so the final bytes are
+`30 91 00 50`.
+
+String inputs encode as fixed-length ASCII:
+
+```yaml
+actions:
+  SET_DRIVER_TAG:
+    endpoint: body
+    inputs:
+      tag:
+        type: string
+        required: true
+        length: 4
+    send: [0x30, 0xA0, 0x00, 0x00, 0x00, 0x00]
+    encode:
+      - input: tag
+        as: ascii
+        at: 2
+        length: 4
+        pad: 0x00
+```
+
+Bit-level placement is available for packed fields:
+
+```yaml
+actions:
+  SET_LIGHT_MODE:
+    endpoint: body
+    inputs:
+      mode:
+        type: integer
+        required: true
+        min: 0
+        max: 3
+    send: [0x30, 0xB0, 0x00]
+    encode:
+      - input: mode
+        start_bit: 16
+        length: 2
+        signed: false
+        byte_order: little_endian
+        scale: 1
+        offset: 0
+```
+
+Supported numeric `as` values are `uint8`, `uint16`, `uint32`, `int8`, `int16`,
+and `int32`. `byte_order` defaults to `big_endian`.
+
 Actions may return nothing. If `expect` validation is used, actions return
 boolean success or failure.
 

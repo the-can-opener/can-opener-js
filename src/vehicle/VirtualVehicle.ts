@@ -3,6 +3,7 @@ import { QueryController } from "../controllers/QueryController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
 import type {
+  ActionInputs,
   ActionOptions,
   DbcFile,
   PollingOptions,
@@ -88,13 +89,11 @@ export class VirtualVehicle {
   }
 
   async action(actionName: string): Promise<boolean | void>;
+  async action(actionName: string, inputs: ActionInputs): Promise<boolean | void>;
   async action(signalName: string, opts: ActionOptions): Promise<void>;
-  async action(name: string, opts?: ActionOptions): Promise<boolean | void> {
+  async action(name: string, opts?: ActionInputs | ActionOptions): Promise<boolean | void> {
     if (this.internals.capabilities.hasProfiles()) {
-      if (opts !== undefined) {
-        throw new VirtualVehicleError(`Profile action ${name} does not accept raw frame action options`);
-      }
-      return await this.internals.actions.run(this.internals.capabilities.resolveAction(name));
+      return await this.internals.actions.run(this.internals.capabilities.resolveAction(name), opts as ActionInputs | undefined);
     }
 
     if (opts === undefined) {
@@ -106,7 +105,7 @@ export class VirtualVehicle {
       throw new SignalProtocolError(name, "frame", signal.protocol);
     }
 
-    await this.internals.actions.send(signal, opts);
+    await this.internals.actions.send(signal, opts as ActionOptions);
   }
 
   reloadDbc(files: DbcFile[]): void {

@@ -130,6 +130,8 @@ export interface QuerySubscriptionHandle {
   readonly signalName: string;
 }
 
+export type ActionInputs = Record<string, number | string | boolean>;
+
 export interface ActionOptions extends PollingOptions {
   value: unknown;
   mask?: number;

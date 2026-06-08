@@ -42,9 +42,44 @@ export interface ProfileValueNormalization {
   enum?: Record<string, string>;
 }
 
+export type ActionInputValueType = "number" | "integer" | "string";
+
+export interface ActionInputSpec {
+  name: string;
+  type: ActionInputValueType;
+  required: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  length?: number;
+}
+
+export interface NumericActionEncodeField {
+  type: "numeric";
+  input: string;
+  startBit: number;
+  length: number;
+  signed: boolean;
+  scale: number;
+  offset: number;
+  byteOrder: "big" | "little";
+}
+
+export interface AsciiActionEncodeField {
+  type: "ascii";
+  input: string;
+  startByte: number;
+  length: number;
+  pad: number;
+}
+
+export type ActionEncodeField = NumericActionEncodeField | AsciiActionEncodeField;
+
 export interface RequestStep {
   endpoint?: string;
   send: Uint8Array;
+  encode?: ActionEncodeField[];
   expect?: ExpectPattern;
 }
 
@@ -61,6 +96,7 @@ export interface ProfileQuery {
 export interface ProfileAction {
   name: string;
   endpoint?: string;
+  inputs?: ActionInputSpec[];
   steps: RequestStep[];
 }
 

@@ -47,3 +47,72 @@ actions:
   HORN:
     endpoint: body
     send: [0x01]
+
+  SET_TEMPERATURE:
+    endpoint: body
+    inputs:
+      temperature:
+        type: number
+        required: true
+        min: 16
+        max: 30
+        step: 0.5
+        unit: celsius
+    send: [0x30, 0x50, 0x00]
+    encode:
+      - input: temperature
+        as: uint8
+        at: 2
+        scale: 0.5
+        offset: 0
+
+  SET_CHARGE_LIMIT:
+    endpoint: body
+    inputs:
+      limit:
+        type: integer
+        required: true
+        min: 50
+        max: 100
+        unit: percent
+    send: [0x30, 0x91, 0x00, 0x00]
+    encode:
+      - input: limit
+        as: uint16
+        at: 2
+        byte_order: big_endian
+        scale: 1
+        offset: 0
+
+  SET_DRIVER_TAG:
+    endpoint: body
+    inputs:
+      tag:
+        type: string
+        required: true
+        length: 4
+    send: [0x30, 0xA0, 0x00, 0x00, 0x00, 0x00]
+    encode:
+      - input: tag
+        as: ascii
+        at: 2
+        length: 4
+        pad: 0x00
+
+  SET_LIGHT_MODE:
+    endpoint: body
+    inputs:
+      mode:
+        type: integer
+        required: true
+        min: 0
+        max: 3
+    send: [0x30, 0xB0, 0x00]
+    encode:
+      - input: mode
+        start_bit: 16
+        length: 2
+        signed: false
+        byte_order: little_endian
+        scale: 1
+        offset: 0
