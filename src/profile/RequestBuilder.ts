@@ -11,8 +11,13 @@ export function buildRequestFrame(endpoint: ProfileEndpoint, payload: Uint8Array
   };
 }
 
-export function buildStepFrame(step: RequestStep, endpoint: ProfileEndpoint): CanFrame {
-  return buildRequestFrame(endpoint, step.send);
+export function buildStepFrame(step: RequestStep, endpoint?: ProfileEndpoint): CanFrame {
+  const requestId = step.requestId ?? endpoint?.requestId;
+  if (requestId === undefined) {
+    throw new Error("Request step does not declare a request ID");
+  }
+
+  return buildRequestFrame({ requestId } as ProfileEndpoint, step.send);
 }
 
 export function responseBounds(endpoint: ProfileEndpoint): { responseIdStart?: number; responseIdEnd?: number } {

@@ -63,16 +63,18 @@ export class ActionController {
     let verified = false;
     for (const step of action.steps) {
       const endpointName = step.endpoint ?? action.endpoint;
-      if (endpointName === undefined) {
-        throw new Error(`Action ${action.name} step does not declare an endpoint`);
+      const endpoint = step.requestId === undefined && endpointName !== undefined
+        ? this.resolveEndpoint(endpointName)
+        : undefined;
+      if (step.requestId === undefined && endpoint === undefined) {
+        throw new Error(`Action ${action.name} step does not declare an endpoint or request_id`);
       }
-      const endpoint = this.resolveEndpoint(endpointName);
       const payload = await this.transport.sendRequest({
         signalName: action.name,
         txFrame: buildStepFrame(step, endpoint),
         expectCanResponse: step.expect !== undefined,
-        ...responseBounds(endpoint),
-        ...(endpoint.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
+        ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
+        ...(endpoint?.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
       });
 
       if (step.expect === undefined) {

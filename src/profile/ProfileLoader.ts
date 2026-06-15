@@ -61,7 +61,7 @@ interface RawQuery {
 
 interface RawAction {
   endpoint?: unknown;
-  send?: unknown[];
+  send?: unknown;
   expect?: unknown;
   steps?: RawStep[];
 }
@@ -69,7 +69,7 @@ interface RawAction {
 type RawStep = {
   endpoint?: unknown;
   ref?: unknown;
-  send?: unknown[];
+  send?: unknown;
   expect?: unknown;
 };
 
@@ -99,7 +99,10 @@ export class ProfileLoader {
       dbcFiles,
       endpoints,
       queries: Object.entries(raw.queries ?? {}).map(([name, query]) => normalizeQuery(name, query)),
-      actions: Object.entries(raw.actions ?? {}).map(([name, action]) => normalizeAction(name, action, sequences)),
+      actions: Object.entries(raw.actions ?? {}).flatMap(([name, action]) => {
+        const normalized = normalizeAction(name, action, sequences);
+        return normalized === undefined ? [] : [normalized];
+      }),
       signals: Object.entries(raw.signals ?? {}).flatMap(([name, signal]) => normalizeSignal(name, signal)),
     };
   }
@@ -154,18 +157,30 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
   };
 }
 
-function normalizeAction(name: string, raw: RawAction, sequences: Record<string, RawSequence>): ProfileAction {
+function normalizeAction(
+  name: string,
+  raw: RawAction,
+  sequences: Record<string, RawSequence>,
+): ProfileAction | undefined {
+  const endpoint = raw.endpoint !== undefined
+    ? readString(raw.endpoint, `actions.${name}.endpoint`)
+    : undefined;
   const steps = raw.steps !== undefined
     ? expandSteps(raw.steps, sequences, raw.endpoint)
-    : [{
-        ...(raw.endpoint !== undefined ? { endpoint: readString(raw.endpoint, `actions.${name}.endpoint`) } : {}),
-        send: Uint8Array.from(readByteArray(raw.send, `actions.${name}.send`)),
-        ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `actions.${name}.expect`) } : {}),
-      }];
+    : raw.send !== undefined
+      ? [{
+          ...readSendStep(raw.send, `actions.${name}.send`, endpoint),
+          ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `actions.${name}.expect`) } : {}),
+        }]
+      : undefined;
+
+  if (steps === undefined || steps.length === 0) {
+    return undefined;
+  }
 
   return {
     name,
-    ...(raw.endpoint !== undefined ? { endpoint: readString(raw.endpoint, `actions.${name}.endpoint`) } : {}),
+    ...(endpoint !== undefined ? { endpoint } : {}),
     steps,
   };
 }
@@ -213,11 +228,12 @@ function expandSteps(
       return expandSteps(sequence.steps ?? [], sequences, sequence.endpoint ?? inheritedEndpoint, [...seen, ref]);
     }
 
+    const stepEndpoint = step.endpoint !== undefined || inheritedEndpoint !== undefined
+      ? readString(step.endpoint ?? inheritedEndpoint, "steps.endpoint")
+      : undefined;
+
     return [{
-      ...(step.endpoint !== undefined || inheritedEndpoint !== undefined
-        ? { endpoint: readString(step.endpoint ?? inheritedEndpoint, "steps.endpoint") }
-        : {}),
-      send: Uint8Array.from(readByteArray(step.send, "steps.send")),
+      ...readSendStep(step.send, "steps.send", stepEndpoint),
       ...(step.expect !== undefined ? { expect: normalizeExpect(step.expect, "steps.expect") } : {}),
     }];
   });
@@ -302,6 +318,34 @@ function normalizeExpect(raw: unknown, path: string): ExpectPattern {
 
 function readPattern(raw: unknown[], path: string): ProfileByte[] {
   return raw.map((byte, index) => byte === "*" ? "*" : readByte(byte, `${path}[${index}]`));
+}
+
+function readSendStep(
+  raw: unknown,
+  path: string,
+  endpoint?: string,
+): Pick<RequestStep, "endpoint" | "requestId" | "send"> {
+  if (Array.isArray(raw)) {
+    return {
+      ...(endpoint !== undefined ? { endpoint } : {}),
+      send: Uint8Array.from(readByteArray(raw, path)),
+    };
+  }
+
+  if (raw !== null && typeof raw === "object") {
+    const send = raw as { request_id?: unknown; request?: unknown };
+    if (send.request_id !== undefined && send.request !== undefined) {
+      return {
+        requestId: readNumber(send.request_id, `${path}.request_id`),
+        send: Uint8Array.from(readByteArray(
+          Array.isArray(send.request) ? send.request : undefined,
+          `${path}.request`,
+        )),
+      };
+    }
+  }
+
+  throw new VirtualVehicleError(`${path} must be a byte array or { request_id, request } object`);
 }
 
 function readByteArray(raw: unknown[] | undefined, path: string): number[] {

@@ -11,7 +11,8 @@ import type {
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import type { ProfileValueNormalization } from "../profile/types.js";
+import { ProfileLoader } from "../profile/ProfileLoader.js";
+import type { ProfileValueNormalization, VehicleProfileSource } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
 
@@ -117,6 +118,12 @@ export class VirtualVehicle {
     this.internals.queries.cancelAllSubscriptions();
     this.internals.queries.clearPending();
     this.internals.actions.clearScheduled();
+  }
+
+  reloadProfiles(sources: readonly VehicleProfileSource[]): void {
+    const profiles = new ProfileLoader().load(sources);
+    this.internals.capabilities.load(profiles);
+    this.dbc.load(profiles.flatMap((profile) => profile.dbcFiles));
   }
 
   handleFrame(frame: Parameters<SubscriptionController["handleFrame"]>[0]): void {

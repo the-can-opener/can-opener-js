@@ -44,6 +44,7 @@ export interface ProfileValueNormalization {
 
 export interface RequestStep {
   endpoint?: string;
+  requestId?: number;
   send: Uint8Array;
   expect?: ExpectPattern;
 }
