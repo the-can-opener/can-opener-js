@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanFrame } from "../src/dbc/types.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
+import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import { testVehicleProfile, universalPidProfile } from "./fixtures.js";
 
@@ -104,6 +105,39 @@ describe("VirtualVehicle.query", () => {
     });
   });
 
+  it("keeps universal PID fuel queries when a cloud profile is also loaded", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [cloudFuelProfile, universalPidProfile],
+    });
+    const response = car.dbc.encodeSignal("FUEL_LEVEL", 50);
+    response.data[1] = 0x41;
+    response.data[2] = 0x2f;
+
+    transport.scriptPidResponse(requestFrame(0x01, 0x2f), response.data);
+
+    await expect(car.query<number>("FUEL_LEVEL")).resolves.toBeCloseTo(50, 0);
+    expect(transport.requests[0]).toMatchObject({
+      signalName: "FUEL_LEVEL",
+      txFrame: {
+        canId: 0x7df,
+      },
+    });
+    expect(Array.from(transport.requests[0]?.txFrame.data ?? [])).toEqual([
+      0x01,
+      0x2f,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+  });
+
   it("polls query subscriptions and updates vehicle state", async () => {
     vi.useFakeTimers();
     try {
@@ -182,6 +216,25 @@ describe("VirtualVehicle.query", () => {
     await expect(car.subscribeQuery("ENGINE_RPM")).rejects.toThrow("Unknown vehicle signal: ENGINE_RPM");
   });
 });
+
+const cloudFuelProfile: VehicleProfileSource = {
+  name: "cloud/profile.yaml",
+  content: `version: 1
+
+endpoints:
+  cloud:
+    request_id: 0x700
+    response_id: 0x708
+
+queries:
+  FUEL_LEVEL:
+    endpoint: cloud
+    send: [0x22, 0x12, 0x34]
+    expect: [0x62, 0x12, 0x34]
+    decoder: bytes
+`,
+  dbcFiles: [],
+};
 
 function requestFrame(service: number, pid: number, canId = 0x7df): CanFrame {
   const data = new Uint8Array(8);

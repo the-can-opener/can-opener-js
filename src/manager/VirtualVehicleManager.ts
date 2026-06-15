@@ -7,7 +7,7 @@ import { VehicleConnectionError } from "../errors.js";
 import { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../profile/types.js";
-import type { VehicleTransport } from "../transport/types.js";
+import type { VehicleDisconnectOptions, VehicleTransport } from "../transport/types.js";
 import { VehicleState } from "../vehicle/VehicleState.js";
 import { VirtualVehicle } from "../vehicle/VirtualVehicle.js";
 
@@ -65,18 +65,23 @@ export class VirtualVehicleManager {
     return this.vehicles.get(id);
   }
 
-  async disconnect(id: string): Promise<void> {
+  async disconnect(
+    id: string,
+    options: VehicleDisconnectOptions = {},
+  ): Promise<void> {
     const vehicle = this.vehicles.get(id);
     if (vehicle === undefined) {
       return;
     }
 
-    await vehicle.disconnect();
+    await vehicle.disconnect(options);
     this.vehicles.delete(id);
   }
 
-  async disconnectAll(): Promise<void> {
-    await Promise.all(Array.from(this.vehicles.keys(), (id) => this.disconnect(id)));
+  async disconnectAll(options: VehicleDisconnectOptions = {}): Promise<void> {
+    await Promise.all(
+      Array.from(this.vehicles.keys(), (id) => this.disconnect(id, options)),
+    );
   }
 
   list(): VirtualVehicle[] {

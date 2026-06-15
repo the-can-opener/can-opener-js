@@ -3,15 +3,20 @@ import type { VehicleSignal, VehicleSignalState } from "./types.js";
 
 export class SignalRegistry {
   private readonly signals = new Map<string, VehicleSignal>();
+  private readonly signalsByMessageSignal = new Map<string, VehicleSignal>();
   private readonly enumStates = new Map<string, VehicleSignalState>();
 
   clear(): void {
     this.signals.clear();
+    this.signalsByMessageSignal.clear();
     this.enumStates.clear();
   }
 
   set(signal: VehicleSignal): void {
     this.signals.set(signal.name, signal);
+    if (signal.messageName !== undefined) {
+      this.signalsByMessageSignal.set(`${signal.messageName}:${signal.name}`, signal);
+    }
     this.setEnumStates(signal);
   }
 
@@ -50,9 +55,7 @@ export class SignalRegistry {
   }
 
   findByMessageSignal(messageName: string, signalName: string): VehicleSignal | undefined {
-    return Array.from(this.signals.values()).find(
-      (signal) => signal.messageName === messageName && signal.name === signalName,
-    );
+    return this.signalsByMessageSignal.get(`${messageName}:${signalName}`);
   }
 
   values(): VehicleSignal[] {

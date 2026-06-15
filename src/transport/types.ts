@@ -28,6 +28,10 @@ export interface MonitorSnapshot {
   frames: readonly CanFrame[];
 }
 
+export interface VehicleDisconnectOptions {
+  cancelConnection?: boolean;
+}
+
 export interface VehicleRequest {
   signalName?: string;
   txFrame: CanFrame;
@@ -35,6 +39,7 @@ export interface VehicleRequest {
   notifyTxStatus?: boolean;
   responseIdStart?: number;
   responseIdEnd?: number;
+  responseIdExtended?: boolean;
   timeoutMs?: number;
   diagnostic?: DiagnosticBinding;
   action?: ActionOptions;
@@ -42,7 +47,7 @@ export interface VehicleRequest {
 
 export interface VehicleTransport {
   connect(): Promise<void>;
-  disconnect(): Promise<void>;
+  disconnect(options?: VehicleDisconnectOptions): Promise<void>;
   sendRequest(req: VehicleRequest): Promise<CanPayload | undefined>;
   updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse>;
   onMonitorSnapshot(cb: (snapshot: MonitorSnapshot) => void): () => void;

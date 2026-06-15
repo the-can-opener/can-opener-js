@@ -491,7 +491,21 @@ Queries always use BLE request/response.
 Actions change vehicle state. They may be request-only, verified
 request/response, or multi-step flows.
 
-Single request:
+### send forms
+
+The `send` field accepts two forms:
+
+- **Array form** `send: [0x30, 0x38, ...]`: requires `endpoint` to supply the
+  transmit CAN ID and optional response bounds.
+- **Object form** `send: {request_id: 0x123, request: [...]}`: embeds the
+  transmit CAN ID inline. No `endpoint` is needed. This form is always
+  request-only; response bounds and timeouts are not inherited from any
+  endpoint.
+
+Actions with no `send` and no `steps` are silently skipped during profile
+loading.
+
+Single request (inline `request_id`, no endpoint required):
 
 ```yaml
 actions:
@@ -501,7 +515,7 @@ actions:
       request: [0x01, 0x00, 0x00, 0x00]
 ```
 
-Verified request/response:
+Verified request/response (array `send`, endpoint required):
 
 ```yaml
 actions:
@@ -535,11 +549,39 @@ boolean success or failure.
 - Queries use request/response and return a decoded value.
 - Actions with `expect` use request/response and return a boolean.
 - Actions without `expect` use request-only.
+- Actions using the `{request_id, request}` inline form use request-only
+  without response bounds, regardless of whether an endpoint is also present.
 - Sequences expand into multiple BLE request transactions.
+
+## Runtime Profile Reloading
+
+`VirtualVehicle.reloadProfiles(sources)` replaces the loaded capability set
+at runtime without reconnecting. This is useful for staged loading: connect
+with a minimal profile (for example, OBD-II PIDs only) to read the VIN, then
+call `reloadProfiles` with the full vehicle-specific profile set after
+discovery.
+
+Profile reload rebuilds capabilities and DBC bindings from scratch. Active
+monitors are not automatically restarted; the caller should re-subscribe after
+reloading.
+
+Batch `subscribe([...])` calls skip signals that cannot be resolved against the
+currently loaded DBC. This makes it safe to call subscribe with a superset of
+signal names before or after a reload.
 
 ## BLE Interface
 
 The BLE interface has three characteristics.
+
+The transport layer supports two additional options not expressed in YAML
+profiles:
+
+- `cancelConnection` (disconnect option): signals the transport to abort an
+  in-progress BLE connection attempt rather than waiting for it to complete
+  before disconnecting.
+- `responseIdExtended` (request option): sets `bit1 = tx_can_id_extended` in
+  the BLE request flags for 29-bit extended CAN ID frames. When unset, standard
+  11-bit IDs are assumed.
 
 ### Request Characteristic
 

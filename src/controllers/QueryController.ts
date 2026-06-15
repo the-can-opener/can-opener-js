@@ -50,6 +50,7 @@ export class QueryController {
       return value;
     });
 
+    void promise.catch(() => undefined);
     this.pending.add(promise);
     try {
       return await promise;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
-import { testVehicleProfile } from "./fixtures.js";
+import { testVehicleProfile, universalPidProfile } from "./fixtures.js";
 
 describe("VirtualVehicleManager", () => {
   it("isolates state and DBC bindings across vehicles", async () => {
@@ -49,5 +49,31 @@ describe("VirtualVehicleManager", () => {
     expect(vehicle.state.get<number>("ENGINE_RPM")).toBeUndefined();
     expect(vehicle.dbc.resolve("ENGINE_RPM").protocol).toBe("frame");
     expect(vehicle.subscriptionCount()).toBe(0);
+  });
+
+  it("loads signal and action capabilities after VIN-only probing", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const vehicle = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [universalPidProfile],
+    });
+
+    await expect(vehicle.subscribe("ENGINE_RPM")).rejects.toThrow(
+      "Unknown vehicle signal: ENGINE_RPM",
+    );
+
+    vehicle.reloadProfiles([universalPidProfile, testVehicleProfile]);
+
+    await expect(vehicle.subscribe("ENGINE_RPM")).resolves.toBe(true);
+    transport.emitFrame(vehicle.dbc.encodeSignal("ENGINE_RPM", 1000));
+    expect(vehicle.state.get<number>("ENGINE_RPM")).toBe(1000);
+
+    await vehicle.action("HORN");
+    expect(transport.requests.at(-1)).toMatchObject({
+      signalName: "HORN",
+      expectCanResponse: false,
+    });
   });
 });

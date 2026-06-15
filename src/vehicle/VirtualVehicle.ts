@@ -12,8 +12,14 @@ import type {
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../profile/ProfileLoader.js";
-import type { ProfileValueNormalization, VehicleProfileSource } from "../profile/types.js";
-import type { VehicleTransport } from "../transport/types.js";
+import type {
+  ProfileValueNormalization,
+  VehicleProfileSource,
+} from "../profile/types.js";
+import type {
+  VehicleDisconnectOptions,
+  VehicleTransport,
+} from "../transport/types.js";
 import type { VehicleState } from "./VehicleState.js";
 
 export interface VirtualVehicleInternals {
@@ -40,30 +46,49 @@ export class VirtualVehicle {
 
   async query<T = unknown>(signalName: string): Promise<T> {
     if (this.internals.capabilities.hasProfiles()) {
-      return await this.internals.queries.requestProfile(this.internals.capabilities.resolveQuery(signalName)) as T;
+      return (await this.internals.queries.requestProfile(
+        this.internals.capabilities.resolveQuery(signalName),
+      )) as T;
     }
 
-    throw new VirtualVehicleError(`Query ${signalName} requires a vehicle profile`);
+    throw new VirtualVehicleError(
+      `Query ${signalName} requires a vehicle profile`,
+    );
   }
 
   async subscribe(signalName: string): Promise<boolean>;
   async subscribe(signalNames: readonly string[]): Promise<boolean>;
-  async subscribe(signalNameOrSubscriptions: string | readonly string[]): Promise<boolean> {
+  async subscribe(
+    signalNameOrSubscriptions: string | readonly string[],
+  ): Promise<boolean> {
     if (typeof signalNameOrSubscriptions !== "string") {
-      const requests: ResolvedSubscriptionRequest[] = signalNameOrSubscriptions.map((signalName) => {
-        return this.resolveSubscriptionRequest(signalName);
-      });
+      const requests: ResolvedSubscriptionRequest[] = [];
+      for (const signalName of signalNameOrSubscriptions) {
+        try {
+          requests.push(this.resolveSubscriptionRequest(signalName));
+        } catch {
+          // Skip signals that cannot be resolved against the loaded DBC.
+        }
+      }
+
+      if (requests.length === 0) {
+        return false;
+      }
 
       return await this.internals.subscriptions.addMany(requests);
     }
 
     const signalName = signalNameOrSubscriptions;
-    return await this.internals.subscriptions.addMany([this.resolveSubscriptionRequest(signalName)]);
+    return await this.internals.subscriptions.addMany([
+      this.resolveSubscriptionRequest(signalName),
+    ]);
   }
 
   async unsubscribe(signalName: string): Promise<void>;
   async unsubscribe(signalNames: readonly string[]): Promise<void>;
-  async unsubscribe(signalNameOrSubscriptions: string | readonly string[]): Promise<void> {
+  async unsubscribe(
+    signalNameOrSubscriptions: string | readonly string[],
+  ): Promise<void> {
     if (typeof signalNameOrSubscriptions !== "string") {
       await this.internals.subscriptions.cancelMany(signalNameOrSubscriptions);
       return;
@@ -76,12 +101,20 @@ export class VirtualVehicle {
     return this.internals.subscriptions.count();
   }
 
-  async subscribeQuery(signalName: string, opts: PollingOptions = {}): Promise<QuerySubscriptionHandle> {
+  async subscribeQuery(
+    signalName: string,
+    opts: PollingOptions = {},
+  ): Promise<QuerySubscriptionHandle> {
     if (this.internals.capabilities.hasProfiles()) {
-      return await this.internals.queries.subscribe(this.internals.capabilities.resolveQuery(signalName), opts);
+      return await this.internals.queries.subscribe(
+        this.internals.capabilities.resolveQuery(signalName),
+        opts,
+      );
     }
 
-    throw new VirtualVehicleError(`Query subscription ${signalName} requires a vehicle profile`);
+    throw new VirtualVehicleError(
+      `Query subscription ${signalName} requires a vehicle profile`,
+    );
   }
 
   unsubscribeQuery(handle: QuerySubscriptionHandle): void {
@@ -93,13 +126,19 @@ export class VirtualVehicle {
   async action(name: string, opts?: ActionOptions): Promise<boolean | void> {
     if (this.internals.capabilities.hasProfiles()) {
       if (opts !== undefined) {
-        throw new VirtualVehicleError(`Profile action ${name} does not accept raw frame action options`);
+        throw new VirtualVehicleError(
+          `Profile action ${name} does not accept raw frame action options`,
+        );
       }
-      return await this.internals.actions.run(this.internals.capabilities.resolveAction(name));
+      return await this.internals.actions.run(
+        this.internals.capabilities.resolveAction(name),
+      );
     }
 
     if (opts === undefined) {
-      throw new VirtualVehicleError(`Raw DBC action ${name} requires action options`);
+      throw new VirtualVehicleError(
+        `Raw DBC action ${name} requires action options`,
+      );
     }
 
     const signal = this.dbc.resolve(name);
@@ -126,28 +165,37 @@ export class VirtualVehicle {
     this.dbc.load(profiles.flatMap((profile) => profile.dbcFiles));
   }
 
-  handleFrame(frame: Parameters<SubscriptionController["handleFrame"]>[0]): void {
+  handleFrame(
+    frame: Parameters<SubscriptionController["handleFrame"]>[0],
+  ): void {
     this.internals.subscriptions.handleFrame(frame);
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(options: VehicleDisconnectOptions = {}): Promise<void> {
     this.internals.subscriptions.cancelAll();
     this.internals.queries.cancelAllSubscriptions();
     this.internals.queries.clearPending();
     this.internals.actions.clearScheduled();
     this.internals.disposeFrames();
-    await this.transport.disconnect();
+    await this.transport.disconnect(options);
   }
 
-  private resolveSubscriptionRequest(signalName: string): ResolvedSubscriptionRequest {
+  private resolveSubscriptionRequest(
+    signalName: string,
+  ): ResolvedSubscriptionRequest {
     if (this.internals.capabilities.hasProfiles()) {
       const monitor = this.internals.capabilities.resolveSignal(signalName);
       return {
         state: {
           name: monitor.name,
-          signal: this.dbc.resolveMessageSignal(monitor.message, monitor.signal),
+          signal: this.dbc.resolveMessageSignal(
+            monitor.message,
+            monitor.signal,
+          ),
         },
-        ...(monitor.normalize !== undefined ? { normalize: monitor.normalize } : {}),
+        ...(monitor.normalize !== undefined
+          ? { normalize: monitor.normalize }
+          : {}),
       };
     }
 
