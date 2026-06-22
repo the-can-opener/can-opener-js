@@ -1,8 +1,6 @@
 import type { QueryController } from "./QueryController.js";
 import type { ProfileQuery } from "../profile/types.js";
 
-type Timer = ReturnType<typeof setInterval>;
-
 export interface QueryRoundRobinStatus {
   hzByName: Record<string, number>;
   names: string[];
@@ -10,18 +8,25 @@ export interface QueryRoundRobinStatus {
   perQueryHz: number;
 }
 
-const DEFAULT_TOTAL_FREQUENCY_HZ = 10;
+// Minimum idle gap between the end of one query and the start of the next.
+// Gives the BLE radio time to drain monitor notifications between OBD requests.
+const INTER_QUERY_GAP_MS = 2000;
+const QUERY_FAILURE_BACKOFF_MS = 20000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class QueryRoundRobinController {
   private queries: ProfileQuery[] = [];
-  private interval: Timer | undefined;
+  private running = false;
+  private stopped = false;
   private cursor = 0;
-  private inFlight: Promise<unknown> | undefined;
+  private readonly failedAtByName = new Map<string, number>();
   private readonly pollHistoryByName = new Map<string, number[]>();
 
   constructor(
     private readonly queryController: QueryController,
-    private readonly totalFrequencyHz = DEFAULT_TOTAL_FREQUENCY_HZ,
   ) {}
 
   update(queries: readonly ProfileQuery[]): void {
@@ -32,21 +37,15 @@ export class QueryRoundRobinController {
       return;
     }
 
-    const intervalMs = 1000 / this.totalFrequencyHz;
-    this.interval = setInterval(() => {
-      this.pollNext();
-    }, intervalMs);
-    this.pollNext();
+    this.stopped = false;
+    void this.runLoop();
   }
 
   clear(): void {
-    if (this.interval !== undefined) {
-      clearInterval(this.interval);
-      this.interval = undefined;
-    }
+    this.stopped = true;
     this.queries = [];
     this.cursor = 0;
-    this.inFlight = undefined;
+    this.failedAtByName.clear();
     this.pollHistoryByName.clear();
   }
 
@@ -58,8 +57,8 @@ export class QueryRoundRobinController {
     if (!this.activeQueryNames().includes(queryName) || this.queries.length === 0) {
       return 0;
     }
-
-    return this.totalFrequencyHz / this.queries.length;
+    // Approximate: one query every (n * INTER_QUERY_GAP_MS + typical_round_trip)
+    return 1000 / (this.queries.length * INTER_QUERY_GAP_MS);
   }
 
   status(): QueryRoundRobinStatus {
@@ -78,26 +77,60 @@ export class QueryRoundRobinController {
     };
   }
 
-  private pollNext(): void {
-    if (this.queries.length === 0 || this.inFlight !== undefined) {
+  private async runLoop(): Promise<void> {
+    if (this.running) {
       return;
     }
 
-    const query = this.queries[this.cursor % this.queries.length];
-    if (query === undefined) {
-      return;
+    this.running = true;
+
+    try {
+      while (!this.stopped && this.queries.length > 0) {
+        const query = this.nextAvailableQuery();
+
+        if (query !== undefined) {
+          try {
+            await this.queryController.requestProfile(query);
+            this.failedAtByName.delete(query.name);
+            this.recordPollSuccess(query.name);
+          } catch {
+            this.failedAtByName.set(query.name, Date.now());
+          }
+        }
+
+        if (this.stopped) {
+          break;
+        }
+
+        await delay(INTER_QUERY_GAP_MS);
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private nextAvailableQuery(): ProfileQuery | undefined {
+    const now = Date.now();
+    for (let attempt = 0; attempt < this.queries.length; attempt += 1) {
+      const query = this.queries[this.cursor % this.queries.length];
+      this.cursor += 1;
+      if (query === undefined) {
+        return undefined;
+      }
+
+      const failedAt = this.failedAtByName.get(query.name);
+      if (failedAt !== undefined && now - failedAt < QUERY_FAILURE_BACKOFF_MS) {
+        continue;
+      }
+
+      if (failedAt !== undefined) {
+        this.failedAtByName.delete(query.name);
+      }
+
+      return query;
     }
 
-    this.cursor += 1;
-    this.inFlight = this.queryController.requestProfile(query)
-      .then((value) => {
-        this.recordPollSuccess(query.name);
-        return value;
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        this.inFlight = undefined;
-      });
+    return undefined;
   }
 
   private recordPollSuccess(queryName: string): void {
