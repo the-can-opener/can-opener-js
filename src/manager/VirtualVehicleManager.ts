@@ -1,5 +1,6 @@
 import { ActionController } from "../controllers/ActionController.js";
 import { QueryController } from "../controllers/QueryController.js";
+import { QueryRoundRobinController } from "../controllers/QueryRoundRobinController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import { DbcController, type DbcControllerOptions } from "../dbc/DbcController.js";
 import type { DbcFile } from "../dbc/types.js";
@@ -39,6 +40,7 @@ export class VirtualVehicleManager {
 
     const subscriptions = new SubscriptionController(state, dbc, options.transport);
     const queries = new QueryController(state, dbc, options.transport, capabilities);
+    const queryRoundRobin = new QueryRoundRobinController(queries);
     const actions = new ActionController(dbc, options.transport, capabilities);
 
     await options.transport.connect();
@@ -52,6 +54,7 @@ export class VirtualVehicleManager {
     const vehicle = new VirtualVehicle(options.id, state, dbc, options.transport, {
       subscriptions,
       queries,
+      queryRoundRobin,
       actions,
       capabilities,
       disposeFrames,

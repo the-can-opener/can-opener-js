@@ -18,7 +18,7 @@ interface SubscriptionRequest {
 export class SubscriptionController {
   private readonly activeBySignal = new Map<string, ActiveSubscription>();
   private readonly activeByCanId = new Map<number, Map<string, ActiveSubscription>>();
-  private readonly monitoredCanIds = new Set<number>();
+  private readonly monitoredCanIdSet = new Set<number>();
 
   constructor(
     private readonly state: VehicleState,
@@ -89,10 +89,14 @@ export class SubscriptionController {
     return this.activeBySignal.size;
   }
 
+  monitoredCanIds(): number[] {
+    return Array.from(this.monitoredCanIdSet);
+  }
+
   cancelAll(): void {
     this.activeBySignal.clear();
     this.activeByCanId.clear();
-    this.monitoredCanIds.clear();
+    this.monitoredCanIdSet.clear();
     void this.transport.updateMonitor({ operation: "clear" });
   }
 
@@ -133,16 +137,16 @@ export class SubscriptionController {
   private async syncTransportSubscription(canId: number): Promise<void> {
     const frameSubscriptions = this.activeByCanId.get(canId);
     if (frameSubscriptions === undefined || frameSubscriptions.size === 0) {
-      if (this.monitoredCanIds.has(canId)) {
+      if (this.monitoredCanIdSet.has(canId)) {
         await this.applyMonitorUpdate({ operation: "remove", canIds: [canId] });
-        this.monitoredCanIds.delete(canId);
+        this.monitoredCanIdSet.delete(canId);
       }
       return;
     }
 
-    if (!this.monitoredCanIds.has(canId)) {
+    if (!this.monitoredCanIdSet.has(canId)) {
       await this.applyMonitorUpdate({ operation: "add", canIds: [canId] });
-      this.monitoredCanIds.add(canId);
+      this.monitoredCanIdSet.add(canId);
     }
   }
 

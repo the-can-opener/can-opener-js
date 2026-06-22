@@ -1,5 +1,9 @@
 import { ActionController } from "../controllers/ActionController.js";
 import { QueryController } from "../controllers/QueryController.js";
+import type {
+  QueryRoundRobinController,
+  QueryRoundRobinStatus,
+} from "../controllers/QueryRoundRobinController.js";
 import { SubscriptionController } from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
 import type {
@@ -25,6 +29,7 @@ import type { VehicleState } from "./VehicleState.js";
 export interface VirtualVehicleInternals {
   subscriptions: SubscriptionController;
   queries: QueryController;
+  queryRoundRobin: QueryRoundRobinController;
   actions: ActionController;
   capabilities: CapabilityRegistry;
   disposeFrames: () => void;
@@ -121,6 +126,29 @@ export class VirtualVehicle {
     this.internals.queries.cancelHandle(handle);
   }
 
+  updateQueryRoundRobin(signalNames: readonly string[]): void {
+    if (this.internals.capabilities.hasProfiles()) {
+      this.internals.queryRoundRobin.update(
+        signalNames.map((signalName) =>
+          this.internals.capabilities.resolveQuery(signalName),
+        ),
+      );
+      return;
+    }
+
+    throw new VirtualVehicleError(
+      "Query round-robin subscriptions require a vehicle profile",
+    );
+  }
+
+  subscribeQueriesRoundRobin(signalNames: readonly string[]): void {
+    this.updateQueryRoundRobin(signalNames);
+  }
+
+  queryRoundRobinStatus(): QueryRoundRobinStatus {
+    return this.internals.queryRoundRobin.status();
+  }
+
   async action(actionName: string): Promise<boolean | void>;
   async action(signalName: string, opts: ActionOptions): Promise<void>;
   async action(name: string, opts?: ActionOptions): Promise<boolean | void> {
@@ -155,6 +183,7 @@ export class VirtualVehicle {
     this.internals.capabilities.clear();
     this.internals.subscriptions.cancelAll();
     this.internals.queries.cancelAllSubscriptions();
+    this.internals.queryRoundRobin.clear();
     this.internals.queries.clearPending();
     this.internals.actions.clearScheduled();
   }
@@ -174,6 +203,7 @@ export class VirtualVehicle {
   async disconnect(options: VehicleDisconnectOptions = {}): Promise<void> {
     this.internals.subscriptions.cancelAll();
     this.internals.queries.cancelAllSubscriptions();
+    this.internals.queryRoundRobin.clear();
     this.internals.queries.clearPending();
     this.internals.actions.clearScheduled();
     this.internals.disposeFrames();
