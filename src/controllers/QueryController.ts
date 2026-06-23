@@ -2,7 +2,13 @@ import type { DbcController } from "../dbc/DbcController.js";
 import type { CanPayload, PollingOptions, QuerySubscriptionHandle } from "../dbc/types.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { applyValueNormalization } from "../profile/normalize.js";
-import { assertExpectedResponse, buildRequestFrame, responseBounds, stripExpectedPrefix } from "../profile/RequestBuilder.js";
+import {
+  alignExpectedPrefix,
+  assertExpectedResponse,
+  buildRequestFrame,
+  responseBounds,
+  stripExpectedPrefix,
+} from "../profile/RequestBuilder.js";
 import type { ProfileQuery, QueryDecoder } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
@@ -146,7 +152,10 @@ export class QueryController {
     if (query.decoder === undefined) {
       return applyValueNormalization(stripExpectedPrefix(query.expect, payload), query.normalize);
     }
-    const decoderPayload = query.decoder.type === "dbc" ? payload : stripExpectedPrefix(query.expect, payload);
+    const decoderPayload =
+      query.decoder.type === "dbc"
+        ? alignExpectedPrefix(query.expect, payload)
+        : stripExpectedPrefix(query.expect, payload);
     return applyValueNormalization(
       decodeProfilePayload(this.dbc, query.decoder, decoderPayload, query.length),
       query.normalize,

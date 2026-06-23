@@ -10,8 +10,9 @@ export interface QueryRoundRobinStatus {
 
 // Minimum idle gap between the end of one query and the start of the next.
 // Gives the BLE radio time to drain monitor notifications between OBD requests.
-const INTER_QUERY_GAP_MS = 2000;
-const QUERY_FAILURE_BACKOFF_MS = 20000;
+const INTER_QUERY_GAP_MS = 300;
+const QUERY_FAILURE_BACKOFF_MS = 10000;
+const HZ_WINDOW_MS = 10000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,7 +66,10 @@ export class QueryRoundRobinController {
     const names = this.activeQueryNames();
     const now = Date.now();
     const hzByName = Object.fromEntries(
-      names.map((name) => [name, this.recentHistory(name, now).length]),
+      names.map((name) => [
+        name,
+        this.recentHistory(name, now).length / (HZ_WINDOW_MS / 1000),
+      ]),
     );
     const totalHz = Object.values(hzByName).reduce((sum, hz) => sum + hz, 0);
 
@@ -142,7 +146,7 @@ export class QueryRoundRobinController {
 
   private recentHistory(queryName: string, now: number): number[] {
     const history = this.pollHistoryByName.get(queryName) ?? [];
-    const recentHistory = history.filter((timestamp) => now - timestamp <= 1000);
+    const recentHistory = history.filter((timestamp) => now - timestamp <= HZ_WINDOW_MS);
     this.pollHistoryByName.set(queryName, recentHistory);
     return recentHistory;
   }

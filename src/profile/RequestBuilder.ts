@@ -47,6 +47,14 @@ export function stripExpectedPrefix(expect: ExpectPattern | undefined, payload: 
   return offset === undefined ? payload : payload.slice(offset + expect.pattern.length);
 }
 
+export function alignExpectedPrefix(expect: ExpectPattern | undefined, payload: CanPayload): CanPayload {
+  if (expect === undefined || expect.exact || expect.pattern.length === 0) {
+    return payload;
+  }
+  const offset = expectedOffset(expect, payload);
+  return offset === undefined ? payload : payload.slice(offset);
+}
+
 function matchesExpectedResponse(expect: ExpectPattern, payload: CanPayload): boolean {
   return expectedOffset(expect, payload) !== undefined;
 }
