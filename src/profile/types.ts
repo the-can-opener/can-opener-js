@@ -17,6 +17,7 @@ export interface ProfileEndpoint {
   name: string;
   requestId: number;
   responseRanges: ResponseIdRange[];
+  extended?: boolean;
   timeoutMs?: number;
 }
 
@@ -56,6 +57,7 @@ export interface ProfileQuery {
   expect?: ExpectPattern;
   decoder?: QueryDecoder;
   length?: number;
+  timeoutMs?: number;
   normalize?: ProfileValueNormalization;
 }
 

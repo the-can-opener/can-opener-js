@@ -74,6 +74,7 @@ export class ActionController {
         txFrame: buildStepFrame(step, endpoint),
         expectCanResponse: step.expect !== undefined,
         ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
+        ...(endpoint?.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),
         ...(endpoint?.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
       });
 

@@ -32,6 +32,7 @@ interface RawEndpoint {
   request_id?: unknown;
   response_id?: unknown;
   response_ids?: unknown[];
+  extended?: unknown;
   timeout_ms?: unknown;
 }
 
@@ -56,6 +57,7 @@ interface RawQuery {
   dbc_mapping?: unknown;
   decoder?: unknown;
   length?: unknown;
+  timeout_ms?: unknown;
   normalize?: unknown;
 }
 
@@ -122,6 +124,7 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     name,
     requestId: readNumber(raw.request_id, `endpoints.${name}.request_id`),
     responseRanges,
+    ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
   };
 }
@@ -153,6 +156,7 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
     ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `queries.${name}.expect`) } : {}),
     ...(decoder !== undefined ? { decoder } : {}),
     ...(raw.length !== undefined ? { length: readNumber(raw.length, `queries.${name}.length`) } : {}),
+    ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `queries.${name}.timeout_ms`) } : {}),
     ...(raw.normalize !== undefined ? { normalize: normalizeValueNormalization(raw.normalize, `queries.${name}.normalize`) } : {}),
   };
 }
@@ -381,6 +385,13 @@ function readString(raw: unknown, path: string): string {
     throw new VirtualVehicleError(`${path} must be a non-empty string`);
   }
   return raw;
+}
+
+function readBoolean(raw: unknown, path: string): boolean {
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  throw new VirtualVehicleError(`${path} must be a boolean`);
 }
 
 function readStringMap(raw: unknown, path: string): Record<string, string> {

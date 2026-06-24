@@ -40,12 +40,14 @@ export class QueryController {
   async requestProfile(query: ProfileQuery): Promise<unknown> {
     const endpoint = this.resolveEndpoint(query.endpoint);
     const frame = buildRequestFrame(endpoint, query.send);
+    const timeoutMs = query.timeoutMs ?? endpoint.timeoutMs;
     const promise = this.transport.sendRequest({
       signalName: query.name,
       txFrame: frame,
       expectCanResponse: true,
       ...responseBounds(endpoint),
-      ...(endpoint.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
+      ...(endpoint.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     }).then((payload) => {
       if (payload === undefined) {
         throw new Error(`No response payload returned for query ${query.name}`);

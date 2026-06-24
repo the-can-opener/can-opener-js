@@ -106,6 +106,35 @@ describe("VirtualVehicle.query", () => {
     });
   });
 
+  it("sends VIN queries through an extended 29-bit PID endpoint", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [extendedVinProfile],
+    });
+    const vin = new TextEncoder().encode("1HGCM82633A004352");
+    const request = obdRequestFrame(0x09, 0x02, 0x18db33f1);
+    request.extended = true;
+
+    transport.scriptPidResponse(request, Uint8Array.of(0x49, 0x02, 0x01, ...vin));
+
+    await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
+    expect(transport.requests[0]).toMatchObject({
+      signalName: "VIN",
+      expectCanResponse: true,
+      responseIdStart: 0x18daf100,
+      responseIdEnd: 0x18daf1ff,
+      responseIdExtended: true,
+      timeoutMs: 2000,
+      txFrame: {
+        canId: 0x18db33f1,
+        extended: true,
+      },
+    });
+  });
+
   it("keeps universal PID fuel queries when a cloud profile is also loaded", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
@@ -233,6 +262,30 @@ queries:
     send: [0x22, 0x12, 0x34]
     expect: [0x62, 0x12, 0x34]
     decoder: bytes
+`,
+  dbcFiles: [],
+};
+
+const extendedVinProfile: VehicleProfileSource = {
+  name: "extended/vin/profile.yaml",
+  content: `version: 1
+
+endpoints:
+  obd_29:
+    request_id: 0x18DB33F1
+    response_ids:
+      - range: [0x18DAF100, 0x18DAF1FF]
+    extended: true
+    timeout_ms: 500
+
+queries:
+  VIN:
+    endpoint: obd_29
+    send: [0x02, 0x09, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]
+    expect: [0x49, 0x02, 0x01]
+    timeout_ms: 2000
+    decoder: ascii
+    length: 17
 `,
   dbcFiles: [],
 };
