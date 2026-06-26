@@ -8,10 +8,11 @@ export interface QueryRoundRobinStatus {
   perQueryHz: number;
 }
 
-// Minimum spacing between the start of consecutive OBD requests.
-// Keeps the BLE radio able to interleave monitor notifications without
-// adding a fixed post-response delay on top of the request round trip.
-const MIN_QUERY_START_INTERVAL_MS = 85;
+// Target total OBD query starts per second across the round-robin pool.
+// Spacing is measured between consecutive request *starts* so a slow BLE
+// round trip does not add delay on top of the response time.
+const TARGET_TOTAL_QUERY_HZ = 10;
+const QUERY_START_INTERVAL_MS = Math.ceil(1000 / TARGET_TOTAL_QUERY_HZ);
 const QUERY_FAILURE_BACKOFF_BASE_MS = 250;
 const QUERY_FAILURE_BACKOFF_MAX_MS = 2000;
 const HZ_WINDOW_MS = 10000;
@@ -24,6 +25,7 @@ export class QueryRoundRobinController {
   private queries: ProfileQuery[] = [];
   private running = false;
   private stopped = false;
+  private paused = false;
   private loopGeneration = 0;
   private cursor = 0;
   private lastQueryStartMs = 0;
@@ -55,6 +57,7 @@ export class QueryRoundRobinController {
 
   clear(): void {
     this.stopped = true;
+    this.paused = false;
     this.loopGeneration += 1;
     this.queries = [];
     this.cursor = 0;
@@ -62,6 +65,22 @@ export class QueryRoundRobinController {
     this.failureCountByName.clear();
     this.nextRetryAtByName.clear();
     this.pollHistoryByName.clear();
+  }
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    if (!this.paused || this.stopped || this.queries.length === 0) {
+      this.paused = false;
+      return;
+    }
+
+    this.paused = false;
+    if (!this.running) {
+      void this.runLoop(this.loopGeneration);
+    }
   }
 
   activeQueryNames(): string[] {
@@ -75,8 +94,7 @@ export class QueryRoundRobinController {
     ) {
       return 0;
     }
-    // Approximate ceiling when BLE round trips are shorter than the min interval.
-    return 1000 / MIN_QUERY_START_INTERVAL_MS;
+    return TARGET_TOTAL_QUERY_HZ;
   }
 
   status(): QueryRoundRobinStatus {
@@ -104,6 +122,7 @@ export class QueryRoundRobinController {
     try {
       while (
         !this.stopped &&
+        !this.paused &&
         generation === this.loopGeneration &&
         this.queries.length > 0
       ) {
@@ -158,7 +177,7 @@ export class QueryRoundRobinController {
     const now = Date.now();
     const retryTimes = Array.from(this.nextRetryAtByName.values());
     if (retryTimes.length === 0) {
-      await delay(MIN_QUERY_START_INTERVAL_MS);
+      await delay(QUERY_START_INTERVAL_MS);
       return;
     }
 
@@ -185,8 +204,8 @@ export class QueryRoundRobinController {
   private async waitForNextQuerySlot(): Promise<void> {
     const now = Date.now();
     const elapsedSinceLastStart = now - this.lastQueryStartMs;
-    if (elapsedSinceLastStart < MIN_QUERY_START_INTERVAL_MS) {
-      await delay(MIN_QUERY_START_INTERVAL_MS - elapsedSinceLastStart);
+    if (elapsedSinceLastStart < QUERY_START_INTERVAL_MS) {
+      await delay(QUERY_START_INTERVAL_MS - elapsedSinceLastStart);
     }
     this.lastQueryStartMs = Date.now();
   }

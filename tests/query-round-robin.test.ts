@@ -176,11 +176,11 @@ describe("QueryRoundRobinController", () => {
         obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3100), 0x0c),
       );
 
-      await vi.advanceTimersByTimeAsync(85);
+      await vi.advanceTimersByTimeAsync(100);
       expect(vehicle.state.get<number>("RPM")).toBe(3100);
 
       transport.pidResponses.clear();
-      await vi.advanceTimersByTimeAsync(85);
+      await vi.advanceTimersByTimeAsync(100);
       expect(vehicle.state.get<number>("RPM")).toBe(3100);
 
       transport.scriptPidResponse(

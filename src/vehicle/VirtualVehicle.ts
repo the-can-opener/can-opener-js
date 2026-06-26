@@ -144,6 +144,14 @@ export class VirtualVehicle {
     );
   }
 
+  pauseQueryRoundRobin(): void {
+    this.internals.queryRoundRobin.pause();
+  }
+
+  resumeQueryRoundRobin(): void {
+    this.internals.queryRoundRobin.resume();
+  }
+
   subscribeQueriesRoundRobin(signalNames: readonly string[]): void {
     this.updateQueryRoundRobin(signalNames);
   }
