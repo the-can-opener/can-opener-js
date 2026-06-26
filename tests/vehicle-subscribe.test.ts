@@ -123,7 +123,7 @@ describe("VirtualVehicle.subscribe", () => {
     expect(remapCar.state.get<string>("LOW_BEAMS")).toBe("on");
   });
 
-  it("rejects PID signals for frame subscriptions", async () => {
+  it("tracks BLE frame refresh rate even when decoded values stay the same", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -132,7 +132,14 @@ describe("VirtualVehicle.subscribe", () => {
       profiles: [testVehicleProfile],
     });
 
-    await expect(car.subscribe("VEHICLE_SPEED")).rejects.toThrow("Unknown vehicle signal: VEHICLE_SPEED");
+    await car.subscribe("ENGINE_RPM");
+
+    for (let i = 0; i < 5; i += 1) {
+      transport.emitFrame(car.dbc.encodeSignal("ENGINE_RPM", 900));
+    }
+
+    expect(car.signalRefreshStatus().hzByName.ENGINE_RPM).toBe(5);
+    expect(car.state.get<number>("ENGINE_RPM")).toBe(900);
   });
 });
 

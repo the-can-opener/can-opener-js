@@ -83,6 +83,38 @@ describe("QueryRoundRobinController", () => {
     }
   });
 
+  it("restarts the loop when update is called while already running", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new VirtualVehicleManager();
+      const transport = new MockTransport();
+      const vehicle = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [universalPidProfile],
+      });
+
+      transport.scriptPidResponse(
+        obdRequestFrame(0x01, 0x0c),
+        obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3000), 0x0c),
+      );
+
+      vehicle.updateQueryRoundRobin(["RPM"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+
+      vehicle.updateQueryRoundRobin(["RPM"]);
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(vehicle.queryRoundRobinStatus().names).toEqual(["RPM"]);
+      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+
+      vehicle.updateQueryRoundRobin([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("polls telemetry queries and decodes standard single-frame OBD responses", async () => {
     vi.useFakeTimers();
     try {
@@ -112,6 +144,51 @@ describe("QueryRoundRobinController", () => {
 
       expect(vehicle.state.get<number>("ECT")).toBe(90);
       expect(vehicle.queryRoundRobinStatus().names).toEqual(["RPM", "ECT"]);
+
+      vehicle.updateQueryRoundRobin([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries failed queries with short exponential backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new VirtualVehicleManager();
+      const transport = new MockTransport();
+      const vehicle = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [universalPidProfile],
+      });
+
+      transport.scriptPidResponse(
+        obdRequestFrame(0x01, 0x0c),
+        obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3000), 0x0c),
+      );
+
+      vehicle.updateQueryRoundRobin(["RPM"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+
+      transport.scriptPidResponse(
+        obdRequestFrame(0x01, 0x0c),
+        obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3100), 0x0c),
+      );
+
+      await vi.advanceTimersByTimeAsync(85);
+      expect(vehicle.state.get<number>("RPM")).toBe(3100);
+
+      transport.pidResponses.clear();
+      await vi.advanceTimersByTimeAsync(85);
+      expect(vehicle.state.get<number>("RPM")).toBe(3100);
+
+      transport.scriptPidResponse(
+        obdRequestFrame(0x01, 0x0c),
+        obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3200), 0x0c),
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(vehicle.state.get<number>("RPM")).toBe(3200);
 
       vehicle.updateQueryRoundRobin([]);
     } finally {

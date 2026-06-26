@@ -4,7 +4,10 @@ import type {
   QueryRoundRobinController,
   QueryRoundRobinStatus,
 } from "../controllers/QueryRoundRobinController.js";
-import { SubscriptionController } from "../controllers/SubscriptionController.js";
+import {
+  SubscriptionController,
+  type SubscriptionRefreshStatus,
+} from "../controllers/SubscriptionController.js";
 import type { DbcController } from "../dbc/DbcController.js";
 import type {
   ActionOptions,
@@ -147,6 +150,10 @@ export class VirtualVehicle {
 
   queryRoundRobinStatus(): QueryRoundRobinStatus {
     return this.internals.queryRoundRobin.status();
+  }
+
+  signalRefreshStatus(): SubscriptionRefreshStatus {
+    return this.internals.subscriptions.refreshStatus();
   }
 
   async action(actionName: string): Promise<boolean | void>;

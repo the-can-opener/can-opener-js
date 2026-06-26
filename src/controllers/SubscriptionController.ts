@@ -15,10 +15,17 @@ interface SubscriptionRequest {
   normalize?: ProfileValueNormalization;
 }
 
+export interface SubscriptionRefreshStatus {
+  hzByName: Record<string, number>;
+}
+
+const REFRESH_HZ_WINDOW_MS = 1000;
+
 export class SubscriptionController {
   private readonly activeBySignal = new Map<string, ActiveSubscription>();
   private readonly activeByCanId = new Map<number, Map<string, ActiveSubscription>>();
   private readonly monitoredCanIdSet = new Set<number>();
+  private readonly frameHistoryByName = new Map<string, number[]>();
 
   constructor(
     private readonly state: VehicleState,
@@ -67,8 +74,22 @@ export class SubscriptionController {
 
         const stateValue = decodeSubscriptionStateValue(active.state, value);
         this.state.update(active.state.name, applyValueNormalization(stateValue, active.normalize));
+        this.recordFrame(active.state.name);
       }
     }
+  }
+
+  refreshStatus(): SubscriptionRefreshStatus {
+    const now = Date.now();
+    const hzByName = Object.fromEntries(
+      Array.from(this.activeBySignal.keys(), (signalName) => [
+        signalName,
+        this.recentHistory(signalName, now).length /
+          (REFRESH_HZ_WINDOW_MS / 1000),
+      ]),
+    );
+
+    return { hzByName };
   }
 
   async cancel(signalName: string): Promise<void> {
@@ -97,6 +118,7 @@ export class SubscriptionController {
     this.activeBySignal.clear();
     this.activeByCanId.clear();
     this.monitoredCanIdSet.clear();
+    this.frameHistoryByName.clear();
     void this.transport.updateMonitor({ operation: "clear" });
   }
 
@@ -118,6 +140,7 @@ export class SubscriptionController {
     }
 
     this.activeBySignal.delete(signalName);
+    this.frameHistoryByName.delete(signalName);
     const frameSubscriptions = this.activeByCanId.get(active.state.signal.canId);
     frameSubscriptions?.delete(signalName);
 
@@ -155,6 +178,22 @@ export class SubscriptionController {
     if (response.status !== "ok") {
       throw new Error(`Monitor ${req.operation} failed with status ${response.status}`);
     }
+  }
+
+  private recordFrame(signalName: string): void {
+    const now = Date.now();
+    const history = this.recentHistory(signalName, now);
+    history.push(now);
+    this.frameHistoryByName.set(signalName, history);
+  }
+
+  private recentHistory(signalName: string, now: number): number[] {
+    const history = this.frameHistoryByName.get(signalName) ?? [];
+    const recentHistory = history.filter(
+      (timestamp) => now - timestamp <= REFRESH_HZ_WINDOW_MS,
+    );
+    this.frameHistoryByName.set(signalName, recentHistory);
+    return recentHistory;
   }
 }
 

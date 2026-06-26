@@ -8,10 +8,12 @@ export interface QueryRoundRobinStatus {
   perQueryHz: number;
 }
 
-// Minimum idle gap between the end of one query and the start of the next.
-// Gives the BLE radio time to drain monitor notifications between OBD requests.
-const INTER_QUERY_GAP_MS = 100;
-const QUERY_FAILURE_BACKOFF_MS = 10000;
+// Minimum spacing between the start of consecutive OBD requests.
+// Keeps the BLE radio able to interleave monitor notifications without
+// adding a fixed post-response delay on top of the request round trip.
+const MIN_QUERY_START_INTERVAL_MS = 85;
+const QUERY_FAILURE_BACKOFF_BASE_MS = 250;
+const QUERY_FAILURE_BACKOFF_MAX_MS = 2000;
 const HZ_WINDOW_MS = 10000;
 
 function delay(ms: number): Promise<void> {
@@ -22,29 +24,43 @@ export class QueryRoundRobinController {
   private queries: ProfileQuery[] = [];
   private running = false;
   private stopped = false;
+  private loopGeneration = 0;
   private cursor = 0;
-  private readonly failedAtByName = new Map<string, number>();
+  private lastQueryStartMs = 0;
+  private readonly failureCountByName = new Map<string, number>();
+  private readonly nextRetryAtByName = new Map<string, number>();
   private readonly pollHistoryByName = new Map<string, number[]>();
 
   constructor(private readonly queryController: QueryController) {}
 
   update(queries: readonly ProfileQuery[]): void {
-    this.clear();
+    this.stopped = true;
+    this.loopGeneration += 1;
+    const generation = this.loopGeneration;
+
     this.queries = uniqueQueries(queries);
+    this.cursor = 0;
+    this.lastQueryStartMs = 0;
+    this.failureCountByName.clear();
+    this.nextRetryAtByName.clear();
+    this.pollHistoryByName.clear();
 
     if (this.queries.length === 0) {
       return;
     }
 
     this.stopped = false;
-    void this.runLoop();
+    void this.runLoop(generation);
   }
 
   clear(): void {
     this.stopped = true;
+    this.loopGeneration += 1;
     this.queries = [];
     this.cursor = 0;
-    this.failedAtByName.clear();
+    this.lastQueryStartMs = 0;
+    this.failureCountByName.clear();
+    this.nextRetryAtByName.clear();
     this.pollHistoryByName.clear();
   }
 
@@ -59,8 +75,8 @@ export class QueryRoundRobinController {
     ) {
       return 0;
     }
-    // Approximate: one query every (n * INTER_QUERY_GAP_MS + typical_round_trip)
-    return 1000 / (this.queries.length * INTER_QUERY_GAP_MS);
+    // Approximate ceiling when BLE round trips are shorter than the min interval.
+    return 1000 / MIN_QUERY_START_INTERVAL_MS;
   }
 
   status(): QueryRoundRobinStatus {
@@ -82,35 +98,39 @@ export class QueryRoundRobinController {
     };
   }
 
-  private async runLoop(): Promise<void> {
-    if (this.running) {
-      return;
-    }
-
+  private async runLoop(generation: number): Promise<void> {
     this.running = true;
 
     try {
-      while (!this.stopped && this.queries.length > 0) {
+      while (
+        !this.stopped &&
+        generation === this.loopGeneration &&
+        this.queries.length > 0
+      ) {
         const query = this.nextAvailableQuery();
 
-        if (query !== undefined) {
-          try {
-            await this.queryController.requestProfile(query);
-            this.failedAtByName.delete(query.name);
-            this.recordPollSuccess(query.name);
-          } catch {
-            this.failedAtByName.set(query.name, Date.now());
-          }
+        if (query === undefined) {
+          await this.waitForNextRetry();
+          continue;
         }
 
-        if (this.stopped) {
+        try {
+          await this.waitForNextQuerySlot();
+          await this.queryController.requestProfile(query);
+          this.clearQueryFailure(query.name);
+          this.recordPollSuccess(query.name);
+        } catch {
+          this.recordQueryFailure(query.name);
+        }
+
+        if (this.stopped || generation !== this.loopGeneration) {
           break;
         }
-
-        await delay(INTER_QUERY_GAP_MS);
       }
     } finally {
-      this.running = false;
+      if (generation === this.loopGeneration) {
+        this.running = false;
+      }
     }
   }
 
@@ -123,19 +143,52 @@ export class QueryRoundRobinController {
         return undefined;
       }
 
-      const failedAt = this.failedAtByName.get(query.name);
-      if (failedAt !== undefined && now - failedAt < QUERY_FAILURE_BACKOFF_MS) {
+      const nextRetryAt = this.nextRetryAtByName.get(query.name);
+      if (nextRetryAt !== undefined && now < nextRetryAt) {
         continue;
-      }
-
-      if (failedAt !== undefined) {
-        this.failedAtByName.delete(query.name);
       }
 
       return query;
     }
 
     return undefined;
+  }
+
+  private async waitForNextRetry(): Promise<void> {
+    const now = Date.now();
+    const retryTimes = Array.from(this.nextRetryAtByName.values());
+    if (retryTimes.length === 0) {
+      await delay(MIN_QUERY_START_INTERVAL_MS);
+      return;
+    }
+
+    const waitMs = Math.max(0, Math.min(...retryTimes) - now);
+    if (waitMs > 0) {
+      await delay(waitMs);
+    }
+  }
+
+  private clearQueryFailure(queryName: string): void {
+    this.failureCountByName.delete(queryName);
+    this.nextRetryAtByName.delete(queryName);
+  }
+
+  private recordQueryFailure(queryName: string): void {
+    const failureCount = (this.failureCountByName.get(queryName) ?? 0) + 1;
+    this.failureCountByName.set(queryName, failureCount);
+    this.nextRetryAtByName.set(
+      queryName,
+      Date.now() + queryFailureBackoffMs(failureCount),
+    );
+  }
+
+  private async waitForNextQuerySlot(): Promise<void> {
+    const now = Date.now();
+    const elapsedSinceLastStart = now - this.lastQueryStartMs;
+    if (elapsedSinceLastStart < MIN_QUERY_START_INTERVAL_MS) {
+      await delay(MIN_QUERY_START_INTERVAL_MS - elapsedSinceLastStart);
+    }
+    this.lastQueryStartMs = Date.now();
   }
 
   private recordPollSuccess(queryName: string): void {
@@ -153,6 +206,14 @@ export class QueryRoundRobinController {
     this.pollHistoryByName.set(queryName, recentHistory);
     return recentHistory;
   }
+}
+
+function queryFailureBackoffMs(failureCount: number): number {
+  const exponent = Math.max(0, failureCount - 1);
+  return Math.min(
+    QUERY_FAILURE_BACKOFF_MAX_MS,
+    QUERY_FAILURE_BACKOFF_BASE_MS * 2 ** exponent,
+  );
 }
 
 function uniqueQueries(queries: readonly ProfileQuery[]): ProfileQuery[] {
