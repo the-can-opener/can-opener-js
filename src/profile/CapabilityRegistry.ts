@@ -64,6 +64,10 @@ export class CapabilityRegistry {
     return action;
   }
 
+  hasAction(name: string): boolean {
+    return this.actions.has(name);
+  }
+
   resolveSignal(name: string): ProfileMonitorSignal {
     const signal = this.signals.get(name);
     if (signal === undefined) {

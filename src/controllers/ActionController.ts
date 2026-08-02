@@ -1,11 +1,13 @@
 import type { DbcController } from "../dbc/DbcController.js";
 import type { CanFrame, ActionOptions, VehicleSignal } from "../dbc/types.js";
+import { NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { assertExpectedResponse, buildStepFrame, responseBounds } from "../profile/RequestBuilder.js";
 import type { ProfileAction } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 
 type Timer = ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
+const ECU_WAKE_ACTION = "ECU_WAKE";
 
 export class ActionController {
   private readonly scheduled = new Set<Timer>();
@@ -60,6 +62,24 @@ export class ActionController {
   }
 
   async run(action: ProfileAction): Promise<boolean | void> {
+    try {
+      return await this.runSteps(action);
+    } catch (error: unknown) {
+      if (!(error instanceof NoEcuResponseError) || action.name === ECU_WAKE_ACTION) {
+        throw error;
+      }
+
+      const wakeAction = this.resolveEcuWakeAction();
+      if (wakeAction === undefined) {
+        throw error;
+      }
+
+      await this.runSteps(wakeAction);
+      return this.runSteps(action);
+    }
+  }
+
+  private async runSteps(action: ProfileAction): Promise<boolean | void> {
     let verified = false;
     for (const step of action.steps) {
       const endpointName = step.endpoint ?? action.endpoint;
@@ -82,7 +102,7 @@ export class ActionController {
         continue;
       }
       if (payload === undefined) {
-        return false;
+        throw new NoEcuResponseError(`ECU did not respond to action ${action.name}`);
       }
       try {
         assertExpectedResponse(step.expect, payload);
@@ -93,6 +113,13 @@ export class ActionController {
     }
 
     return verified ? true : undefined;
+  }
+
+  private resolveEcuWakeAction(): ProfileAction | undefined {
+    if (this.capabilities?.hasAction(ECU_WAKE_ACTION) !== true) {
+      return undefined;
+    }
+    return this.capabilities.resolveAction(ECU_WAKE_ACTION);
   }
 
   private applyMask(frame: CanFrame, opts: ActionOptions): CanFrame {

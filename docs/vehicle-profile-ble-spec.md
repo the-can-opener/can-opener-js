@@ -41,6 +41,7 @@ export naming.
 - `OPEN_TRUNK`
 - `CLOSE_TRUNK`
 - `HORN`
+- `ECU_WAKE`
 
 ### Queries
 
@@ -539,6 +540,12 @@ actions:
 
 Actions may return nothing. If `expect` validation is used, actions return
 boolean success or failure.
+
+`ECU_WAKE` is an internal, request-only action used to recover a sleeping ECU.
+When a different action receives no ECU response, the runtime sends `ECU_WAKE`
+and retries the full original action once. It does not wake or retry after an
+unexpected response payload, and it preserves the original failure when the
+active profile does not define `ECU_WAKE`.
 
 ## Firmware Execution Mapping
 

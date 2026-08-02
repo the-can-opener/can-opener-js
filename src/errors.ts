@@ -25,3 +25,10 @@ export class VehicleConnectionError extends VirtualVehicleError {
     this.name = "VehicleConnectionError";
   }
 }
+
+export class NoEcuResponseError extends VirtualVehicleError {
+  constructor(message = "ECU did not respond") {
+    super(message);
+    this.name = "NoEcuResponseError";
+  }
+}
