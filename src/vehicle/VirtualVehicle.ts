@@ -20,6 +20,7 @@ import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type {
+  ActionRunResult,
   ProfileValueNormalization,
   VehicleProfileSource,
 } from "../profile/types.js";
@@ -164,9 +165,9 @@ export class VirtualVehicle {
     return this.internals.subscriptions.refreshStatus();
   }
 
-  async action(actionName: string): Promise<boolean | void>;
+  async action(actionName: string): Promise<ActionRunResult>;
   async action(signalName: string, opts: ActionOptions): Promise<void>;
-  async action(name: string, opts?: ActionOptions): Promise<boolean | void> {
+  async action(name: string, opts?: ActionOptions): Promise<ActionRunResult | void> {
     if (this.internals.capabilities.hasProfiles()) {
       if (opts !== undefined) {
         throw new VirtualVehicleError(

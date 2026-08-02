@@ -7,7 +7,11 @@ import { MockTransport } from "../src/transport/index.js";
 import type { VehicleRequest } from "../src/transport/types.js";
 import { testVehicleProfile } from "./fixtures.js";
 
-type HornBehavior = "timeout-once" | "timeout-always" | "invalid-response";
+type HornBehavior =
+  | "timeout-once"
+  | "timeout-always"
+  | "timeout-then-invalid"
+  | "invalid-response";
 
 class ActionRetryTransport extends MockTransport {
   private hornAttempts = 0;
@@ -34,6 +38,11 @@ class ActionRetryTransport extends MockTransport {
         return Uint8Array.from([0x41]);
       case "timeout-always":
         throw new NoEcuResponseError();
+      case "timeout-then-invalid":
+        if (this.hornAttempts === 1) {
+          throw new NoEcuResponseError();
+        }
+        return Uint8Array.from([0x00]);
       case "invalid-response":
         return Uint8Array.from([0x00]);
       default: {
@@ -151,7 +160,7 @@ actions:
     ]);
   });
 
-  it("retries only once when the ECU remains unresponsive", async () => {
+  it("reports an unknown outcome when the ECU stays silent after a wake", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new ActionRetryTransport("timeout-always");
     const car = await manager.connect({
@@ -160,7 +169,24 @@ actions:
       profiles: [wakeRetryProfile],
     });
 
-    await expect(car.action("HORN")).rejects.toBeInstanceOf(NoEcuResponseError);
+    await expect(car.action("HORN")).resolves.toBe("unknown");
+    expect(transport.requests.map((request) => request.signalName)).toEqual([
+      "HORN",
+      "ECU_WAKE",
+      "HORN",
+    ]);
+  });
+
+  it("reports an unknown outcome when the retry after a wake is unverified", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new ActionRetryTransport("timeout-then-invalid");
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [wakeRetryProfile],
+    });
+
+    await expect(car.action("HORN")).resolves.toBe("unknown");
     expect(transport.requests.map((request) => request.signalName)).toEqual([
       "HORN",
       "ECU_WAKE",

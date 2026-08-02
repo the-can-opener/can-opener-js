@@ -3,7 +3,7 @@ import type { CanFrame, ActionOptions, VehicleSignal } from "../dbc/types.js";
 import { NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { assertExpectedResponse, buildStepFrame, responseBounds } from "../profile/RequestBuilder.js";
-import type { ProfileAction } from "../profile/types.js";
+import type { ActionRunResult, ProfileAction } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 
 type Timer = ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
@@ -61,7 +61,7 @@ export class ActionController {
     this.scheduled.clear();
   }
 
-  async run(action: ProfileAction): Promise<boolean | void> {
+  async run(action: ProfileAction): Promise<ActionRunResult> {
     try {
       return await this.runSteps(action);
     } catch (error: unknown) {
@@ -75,11 +75,22 @@ export class ActionController {
       }
 
       await this.runSteps(wakeAction);
-      return this.runSteps(action);
+      // The retried request still reaches the bus even when its response
+      // cannot be verified (the ECU may still be waking up), so report an
+      // unknown outcome instead of a hard failure.
+      try {
+        const retried = await this.runSteps(action);
+        return retried === false ? "unknown" : retried;
+      } catch (retryError: unknown) {
+        if (!(retryError instanceof NoEcuResponseError)) {
+          throw retryError;
+        }
+        return "unknown";
+      }
     }
   }
 
-  private async runSteps(action: ProfileAction): Promise<boolean | void> {
+  private async runSteps(action: ProfileAction): Promise<boolean | undefined> {
     let verified = false;
     for (const step of action.steps) {
       const endpointName = step.endpoint ?? action.endpoint;
