@@ -54,7 +54,9 @@ export class QueryController {
       }
       assertExpectedResponse(query.expect, payload);
       const value = this.decodeProfileQuery(query, payload);
-      this.state.update(query.name, value);
+      if (this.capabilities?.hasSignal(query.name) !== true) {
+        this.state.update(query.name, value);
+      }
       return value;
     });
 

@@ -75,4 +75,8 @@ export class CapabilityRegistry {
     }
     return signal;
   }
+
+  hasSignal(name: string): boolean {
+    return this.signals.has(name);
+  }
 }

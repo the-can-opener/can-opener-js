@@ -51,6 +51,34 @@ describe("VirtualVehicle.query", () => {
     expect(car.state.get<number>("O2_DATA")).toBe(0.5);
   });
 
+  it("does not let a query overwrite a same-named monitored signal", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [passiveSpeedProfile, universalPidProfile],
+    });
+
+    await car.subscribe("SPEED");
+    transport.emitFrame({
+      canId: 180,
+      data: Uint8Array.of(0, 0, 0, 0, 0, 0x07, 0xd0, 0),
+    });
+    expect(car.state.get<number>("SPEED")).toBe(20);
+
+    const queryResponse = car.dbc.encodeSignal("SPEED", 88);
+    queryResponse.data[0] = 0x41;
+    queryResponse.data[1] = 0x0d;
+    transport.scriptPidResponse(
+      obdRequestFrame(0x01, 0x0d),
+      queryResponse.data,
+    );
+
+    await expect(car.query<number>("SPEED")).resolves.toBe(88);
+    expect(car.state.get<number>("SPEED")).toBe(20);
+  });
+
   it("does not execute undeclared DBC signals as profile queries", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
@@ -264,6 +292,29 @@ queries:
     decoder: bytes
 `,
   dbcFiles: [],
+};
+
+const passiveSpeedProfile: VehicleProfileSource = {
+  name: "toyota/rav4/profile.yaml",
+  content: `version: 1
+
+dbc:
+  files:
+    - path: signals.dbc
+
+signals:
+  SPEED:
+    monitor:
+      message: VEHICLE_SPEED
+      signal: SPEED
+`,
+  dbcFiles: [{
+    name: "signals.dbc",
+    content: [
+      "BO_ 180 VEHICLE_SPEED: 8 Vehicle",
+      ' SG_ SPEED : 47|16@0+ (0.01,0) [0|655.35] "km/h" CANOpener',
+    ].join("\n"),
+  }],
 };
 
 const extendedVinProfile: VehicleProfileSource = {
