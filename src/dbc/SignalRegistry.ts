@@ -3,17 +3,20 @@ import type { VehicleSignal, VehicleSignalState } from "./types.js";
 
 export class SignalRegistry {
   private readonly signals = new Map<string, VehicleSignal>();
+  private readonly signalsByIdentity = new Map<string, VehicleSignal>();
   private readonly signalsByMessageSignal = new Map<string, VehicleSignal>();
   private readonly enumStates = new Map<string, VehicleSignalState>();
 
   clear(): void {
     this.signals.clear();
+    this.signalsByIdentity.clear();
     this.signalsByMessageSignal.clear();
     this.enumStates.clear();
   }
 
   set(signal: VehicleSignal): void {
     this.signals.set(signal.name, signal);
+    this.signalsByIdentity.set(this.identityKey(signal), signal);
     if (signal.messageName !== undefined) {
       this.signalsByMessageSignal.set(`${signal.messageName}:${signal.name}`, signal);
     }
@@ -51,7 +54,7 @@ export class SignalRegistry {
   }
 
   findByCanId(canId: number): VehicleSignal[] {
-    return Array.from(this.signals.values()).filter((signal) => signal.canId === canId);
+    return Array.from(this.signalsByIdentity.values()).filter((signal) => signal.canId === canId);
   }
 
   findByMessageSignal(messageName: string, signalName: string): VehicleSignal | undefined {
@@ -60,6 +63,12 @@ export class SignalRegistry {
 
   values(): VehicleSignal[] {
     return Array.from(this.signals.values());
+  }
+
+  private identityKey(signal: VehicleSignal): string {
+    return signal.messageName === undefined
+      ? signal.name
+      : `${signal.messageName}:${signal.name}`;
   }
 
   private setEnumStates(signal: VehicleSignal): void {

@@ -62,4 +62,34 @@ describe("DbcController", () => {
     });
     expect(dbc.decodeMessageSignal("OBD_Response_7E8", "SPEED", Uint8Array.of(0, 0x41, 0x0d, 88, 0, 0, 0, 0))).toBe(88);
   });
+
+  it("decodes signals with duplicate names from different messages", () => {
+    const dbc = new DbcController();
+    dbc.load([
+      {
+        name: "toyota-rav4.dbc",
+        content: [
+          "BO_ 180 VEHICLE_SPEED: 8 Vehicle",
+          ' SG_ SPEED : 47|16@0+ (0.01,0) [0|655.35] "km/h" CANOpener',
+        ].join("\n"),
+      },
+      ...universalPidProfile.dbcFiles,
+    ]);
+
+    expect(
+      dbc.decodeFrame({
+        canId: 180,
+        data: Uint8Array.of(0, 0, 0, 0, 0, 0x07, 0xd0, 0),
+      }),
+    ).toMatchObject([
+      {
+        name: "SPEED",
+        value: 20,
+        signal: {
+          messageName: "VEHICLE_SPEED",
+          canId: 180,
+        },
+      },
+    ]);
+  });
 });
