@@ -32,6 +32,7 @@ interface RawEndpoint {
   request_id?: unknown;
   response_id?: unknown;
   response_ids?: unknown[];
+  bus?: unknown;
   extended?: unknown;
   timeout_ms?: unknown;
 }
@@ -45,6 +46,7 @@ interface RawSignal {
   monitor?: {
     message?: unknown;
     signal?: unknown;
+    bus?: unknown;
   };
   normalize?: unknown;
   state?: unknown;
@@ -124,6 +126,7 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     name,
     requestId: readNumber(raw.request_id, `endpoints.${name}.request_id`),
     responseRanges,
+    ...(raw.bus !== undefined ? { bus: readBus(raw.bus, `endpoints.${name}.bus`) } : {}),
     ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
   };
@@ -198,6 +201,7 @@ function normalizeSignal(name: string, raw: RawSignal): ProfileMonitorSignal[] {
     name,
     message: readString(raw.monitor.message, `signals.${name}.monitor.message`),
     signal: readString(raw.monitor.signal, `signals.${name}.monitor.signal`),
+    ...(raw.monitor.bus !== undefined ? { bus: readBus(raw.monitor.bus, `signals.${name}.monitor.bus`) } : {}),
     ...(normalize !== undefined ? { normalize } : {}),
   }];
 }
@@ -337,10 +341,11 @@ function readSendStep(
   }
 
   if (raw !== null && typeof raw === "object") {
-    const send = raw as { request_id?: unknown; request?: unknown };
+    const send = raw as { request_id?: unknown; bus?: unknown; request?: unknown };
     if (send.request_id !== undefined && send.request !== undefined) {
       return {
         requestId: readNumber(send.request_id, `${path}.request_id`),
+        ...(send.bus !== undefined ? { bus: readBus(send.bus, `${path}.bus`) } : {}),
         send: Uint8Array.from(readByteArray(
           Array.isArray(send.request) ? send.request : undefined,
           `${path}.request`,
@@ -363,6 +368,14 @@ function readByte(raw: unknown, path: string): number {
   const value = readNumber(raw, path);
   if (!Number.isInteger(value) || value < 0 || value > 0xff) {
     throw new VirtualVehicleError(`${path} must be a byte between 0 and 255`);
+  }
+  return value;
+}
+
+function readBus(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new VirtualVehicleError(`${path} must be an integer between 0 and 255`);
   }
   return value;
 }

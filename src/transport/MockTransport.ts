@@ -6,13 +6,15 @@ type SnapshotCallback = (snapshot: MonitorSnapshot) => void;
 const MAX_MONITOR_IDS = 16;
 
 export class MockTransport implements VehicleTransport {
+  /** Aggregate compatibility view of monitored IDs across all buses. */
   readonly monitorCanIds = new Set<number>();
   readonly requests: VehicleRequest[] = [];
   readonly monitorUpdates: MonitorControlRequest[] = [];
 
   private readonly callbacks = new Set<SnapshotCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
-  private readonly monitorFrames = new Map<number, CanFrame>();
+  private readonly monitorCanIdsByBus = new Map<number, Set<number>>();
+  private readonly monitorFrames = new Map<string, CanFrame>();
   private connected = false;
   private snapshotSequence = 0;
 
@@ -24,6 +26,7 @@ export class MockTransport implements VehicleTransport {
     this.connected = false;
     this.callbacks.clear();
     this.monitorCanIds.clear();
+    this.monitorCanIdsByBus.clear();
     this.monitorFrames.clear();
   }
 
@@ -36,7 +39,9 @@ export class MockTransport implements VehicleTransport {
 
     const response = this.pidResponses.get(frameKey(req.txFrame));
     if (response === undefined) {
-      throw new Error(`No mock response registered for CAN ID ${req.txFrame.canId}`);
+      throw new Error(
+        `No mock response registered for CAN${normalizeBus(req.txFrame.bus)} ID ${req.txFrame.canId}`,
+      );
     }
     return response.slice();
   }
@@ -45,38 +50,47 @@ export class MockTransport implements VehicleTransport {
     this.assertConnected();
     this.monitorUpdates.push(cloneMonitorControlRequest(req));
 
+    const bus = normalizeBus(req.bus);
+    if (!isValidBus(bus)) {
+      return this.monitorResponse("invalid_bus", bus, req.bus !== undefined);
+    }
+
+    const busCanIds = this.getOrCreateBusCanIds(bus);
     if (req.operation === "clear") {
-      this.monitorCanIds.clear();
-      this.monitorFrames.clear();
-      return this.monitorResponse("ok");
+      busCanIds.clear();
+      this.clearFramesForBus(bus);
+      this.refreshAggregateMonitorCanIds();
+      return this.monitorResponse("ok", bus, req.bus !== undefined);
     }
 
     const invalidCanId = req.canIds.find((canId) => !isValidCanId(canId));
     if (invalidCanId !== undefined) {
-      return this.monitorResponse("invalid_can_id");
+      return this.monitorResponse("invalid_can_id", bus, req.bus !== undefined);
     }
 
     if (req.operation === "remove") {
       for (const canId of req.canIds) {
-        this.monitorCanIds.delete(canId);
-        this.monitorFrames.delete(canId);
+        busCanIds.delete(canId);
+        this.monitorFrames.delete(monitorKey(bus, canId));
       }
-      return this.monitorResponse("ok");
+      this.refreshAggregateMonitorCanIds();
+      return this.monitorResponse("ok", bus, req.bus !== undefined);
     }
 
     const uniqueCanIds = new Set(req.canIds);
-    if (uniqueCanIds.size !== req.canIds.length || req.canIds.some((canId) => this.monitorCanIds.has(canId))) {
-      return this.monitorResponse("duplicate_id");
+    if (uniqueCanIds.size !== req.canIds.length || req.canIds.some((canId) => busCanIds.has(canId))) {
+      return this.monitorResponse("duplicate_id", bus, req.bus !== undefined);
     }
 
-    if (this.monitorCanIds.size + uniqueCanIds.size > MAX_MONITOR_IDS) {
-      return this.monitorResponse("monitor_full");
+    if (busCanIds.size + uniqueCanIds.size > MAX_MONITOR_IDS) {
+      return this.monitorResponse("monitor_full", bus, req.bus !== undefined);
     }
 
     for (const canId of uniqueCanIds) {
-      this.monitorCanIds.add(canId);
+      busCanIds.add(canId);
     }
-    return this.monitorResponse("ok");
+    this.refreshAggregateMonitorCanIds();
+    return this.monitorResponse("ok", bus, req.bus !== undefined);
   }
 
   onMonitorSnapshot(cb: SnapshotCallback): () => void {
@@ -90,11 +104,17 @@ export class MockTransport implements VehicleTransport {
     this.pidResponses.set(frameKey(frame), payload.slice());
   }
 
+  clearPidResponses(): void {
+    this.pidResponses.clear();
+  }
+
   emitFrame(frame: CanFrame): void {
-    if (!this.monitorCanIds.has(frame.canId)) {
+    const bus = normalizeBus(frame.bus);
+    if (!this.monitorCanIdsByBus.get(bus)?.has(frame.canId)) {
       return;
     }
-    this.monitorFrames.set(frame.canId, cloneFrame(frame));
+    const normalizedFrame = cloneFrame({ ...frame, bus });
+    this.monitorFrames.set(monitorKey(bus, frame.canId), normalizedFrame);
     this.emitMonitorSnapshot();
   }
 
@@ -108,11 +128,46 @@ export class MockTransport implements VehicleTransport {
     }
   }
 
-  private monitorResponse(status: MonitorControlResponse["status"]): MonitorControlResponse {
-    return {
+  private getOrCreateBusCanIds(bus: number): Set<number> {
+    const existing = this.monitorCanIdsByBus.get(bus);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new Set<number>();
+    this.monitorCanIdsByBus.set(bus, created);
+    return created;
+  }
+
+  private clearFramesForBus(bus: number): void {
+    for (const [key, frame] of this.monitorFrames) {
+      if (normalizeBus(frame.bus) === bus) {
+        this.monitorFrames.delete(key);
+      }
+    }
+  }
+
+  private refreshAggregateMonitorCanIds(): void {
+    this.monitorCanIds.clear();
+    for (const ids of this.monitorCanIdsByBus.values()) {
+      for (const canId of ids) {
+        this.monitorCanIds.add(canId);
+      }
+    }
+  }
+
+  private monitorResponse(
+    status: MonitorControlResponse["status"],
+    bus: number,
+    includeBus: boolean,
+  ): MonitorControlResponse {
+    const response: MonitorControlResponse = {
       status,
-      currentMonitorCount: this.monitorCanIds.size,
+      currentMonitorCount: this.monitorCanIdsByBus.get(bus)?.size ?? 0,
     };
+    if (includeBus) {
+      response.bus = bus;
+    }
+    return response;
   }
 
   private emitMonitorSnapshot(): void {
@@ -133,6 +188,7 @@ function cloneFrame(frame: CanFrame): CanFrame {
     ...(frame.dlc !== undefined ? { dlc: frame.dlc } : {}),
     data: frame.data.slice(),
     ...(frame.extended !== undefined ? { extended: frame.extended } : {}),
+    ...(frame.bus !== undefined ? { bus: frame.bus } : {}),
   };
 }
 
@@ -156,19 +212,35 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
 
 function cloneMonitorControlRequest(req: MonitorControlRequest): MonitorControlRequest {
   if (req.operation === "clear") {
-    return { operation: "clear" };
+    return {
+      operation: "clear",
+      ...(req.bus !== undefined ? { bus: req.bus } : {}),
+    };
   }
 
   return {
     operation: req.operation,
     canIds: [...req.canIds],
+    ...(req.bus !== undefined ? { bus: req.bus } : {}),
   };
 }
 
-function frameKey(frame: CanFrame): string {
-  return `${frame.canId}:${Array.from(frame.data)
+function frameKey(frame: Pick<CanFrame, "canId" | "bus" | "data">): string {
+  return `${normalizeBus(frame.bus)}:${frame.canId}:${Array.from(frame.data)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")}`;
+}
+
+function monitorKey(bus: number, canId: number): string {
+  return `${bus}:${canId}`;
+}
+
+function normalizeBus(bus: number | undefined): number {
+  return bus ?? 0;
+}
+
+function isValidBus(bus: number): boolean {
+  return Number.isInteger(bus) && bus >= 0 && bus <= 0xff;
 }
 
 function isValidCanId(canId: number): boolean {

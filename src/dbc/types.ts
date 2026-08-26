@@ -55,6 +55,8 @@ export interface CanFrame {
   dlc?: number;
   data: Uint8Array;
   extended?: boolean;
+  /** Logical CAN controller. Omitted values default to bus 0. */
+  bus?: number;
 }
 
 export interface DbcFile {

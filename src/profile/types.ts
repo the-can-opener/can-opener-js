@@ -17,6 +17,8 @@ export interface ProfileEndpoint {
   name: string;
   requestId: number;
   responseRanges: ResponseIdRange[];
+  /** Logical CAN controller. Omitted values default to bus 0. */
+  bus?: number;
   extended?: boolean;
   timeoutMs?: number;
 }
@@ -46,6 +48,8 @@ export interface ProfileValueNormalization {
 export interface RequestStep {
   endpoint?: string;
   requestId?: number;
+  /** Used by inline request_id actions. Endpoint-backed steps inherit endpoint.bus. */
+  bus?: number;
   send: Uint8Array;
   expect?: ExpectPattern;
 }
@@ -82,6 +86,8 @@ export interface ProfileMonitorSignal {
   name: string;
   message: string;
   signal: string;
+  /** Logical CAN controller. Omitted values default to bus 0. */
+  bus?: number;
   normalize?: ProfileValueNormalization;
 }
 

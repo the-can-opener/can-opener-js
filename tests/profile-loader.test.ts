@@ -26,6 +26,9 @@ actions:
         dbcFiles: [testVehicleDbc],
       },
     ]);
+    if (profile === undefined) {
+      throw new Error("Expected profile to load");
+    }
 
     expect(profile.actions.map((action) => action.name)).toEqual(["HORN"]);
   });
@@ -52,6 +55,9 @@ actions:
         dbcFiles: [testVehicleDbc],
       },
     ]);
+    if (profile === undefined) {
+      throw new Error("Expected profile to load");
+    }
 
     expect(profile.signals.map((signal) => signal.name)).toEqual(["ENGINE_RPM"]);
     expect(profile.actions).toEqual([]);
@@ -76,6 +82,9 @@ actions:
         dbcFiles: [testVehicleDbc],
       },
     ]);
+    if (profile === undefined) {
+      throw new Error("Expected profile to load");
+    }
 
     expect(profile.actions).toEqual([
       {

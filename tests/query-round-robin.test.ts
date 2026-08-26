@@ -179,7 +179,7 @@ describe("QueryRoundRobinController", () => {
       await vi.advanceTimersByTimeAsync(100);
       expect(vehicle.state.get<number>("RPM")).toBe(3100);
 
-      transport.pidResponses.clear();
+      transport.clearPidResponses();
       await vi.advanceTimersByTimeAsync(100);
       expect(vehicle.state.get<number>("RPM")).toBe(3100);
 

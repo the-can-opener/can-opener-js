@@ -7,20 +7,27 @@ export type MonitorControlStatus =
   | "monitor_full"
   | "duplicate_id"
   | "invalid_can_id"
-  | "internal_error";
+  | "internal_error"
+  | "invalid_bus";
 
 export type MonitorControlRequest =
   | {
       operation: "add" | "remove";
       canIds: readonly number[];
+      /** Logical CAN controller. Omitted values default to bus 0. */
+      bus?: number;
     }
   | {
       operation: "clear";
+      /** Logical CAN controller. Omitted values default to bus 0. */
+      bus?: number;
     };
 
 export interface MonitorControlResponse {
   status: MonitorControlStatus;
   currentMonitorCount: number;
+  /** Bus whose monitor table produced this response. */
+  bus?: number;
 }
 
 export interface MonitorSnapshot {
