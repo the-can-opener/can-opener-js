@@ -8,6 +8,15 @@ export interface VehicleProfileSource {
   dbcFiles: DbcFile[];
 }
 
+export interface ProfileCanBusConfig {
+  /** Logical CAN controller selected by endpoint/signal `bus`. */
+  bus: number;
+  /** Arbitration/nominal bitrate in bits per second. */
+  bitrate: number;
+  /** Optional CAN FD data-phase bitrate in bits per second. */
+  dataBitrate?: number;
+}
+
 export interface ResponseIdRange {
   start: number;
   end: number;
@@ -94,6 +103,7 @@ export interface ProfileMonitorSignal {
 export interface LoadedVehicleProfile {
   name: string;
   dbcFiles: DbcFile[];
+  canBuses: ProfileCanBusConfig[];
   endpoints: ProfileEndpoint[];
   queries: ProfileQuery[];
   actions: ProfileAction[];

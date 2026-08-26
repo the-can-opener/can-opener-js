@@ -1,5 +1,20 @@
 import type { ActionOptions, CanFrame, CanPayload, DiagnosticBinding } from "../dbc/types.js";
 
+export type CanBusConfigStatus = "ok" | "invalid_bus" | "invalid_bitrate" | "internal_error";
+
+export interface CanBusConfigRequest {
+  bus: number;
+  /** Arbitration/nominal bitrate in bits per second. */
+  bitrate: number;
+  /** Optional CAN FD data-phase bitrate in bits per second. */
+  dataBitrate?: number;
+}
+
+export interface CanBusConfigResponse {
+  status: CanBusConfigStatus;
+  bus: number;
+}
+
 export type MonitorControlStatus =
   | "ok"
   | "invalid_opcode"
@@ -8,7 +23,8 @@ export type MonitorControlStatus =
   | "duplicate_id"
   | "invalid_can_id"
   | "internal_error"
-  | "invalid_bus";
+  | "invalid_bus"
+  | "invalid_bitrate";
 
 export type MonitorControlRequest =
   | {
@@ -54,6 +70,8 @@ export interface VehicleRequest {
 
 export interface VehicleTransport {
   connect(): Promise<void>;
+  /** Optional transport capability used when a profile declares `can.buses`. */
+  configureBus?(req: CanBusConfigRequest): Promise<CanBusConfigResponse>;
   disconnect(options?: VehicleDisconnectOptions): Promise<void>;
   sendRequest(req: VehicleRequest): Promise<CanPayload | undefined>;
   updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse>;

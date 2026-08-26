@@ -12,9 +12,41 @@ describe("dual-CAN profile contract", () => {
       throw new Error("Expected profile to load");
     }
 
+    expect(profile.canBuses).toEqual([
+      { bus: 0, bitrate: 500000 },
+      { bus: 1, bitrate: 125000, dataBitrate: 2000000 },
+    ]);
     expect(profile.endpoints.find((endpoint) => endpoint.name === "diagnostics")?.bus).toBe(1);
     expect(profile.signals.find((signal) => signal.name === "RPM_CAN1")?.bus).toBe(1);
     expect(profile.actions.find((action) => action.name === "INLINE_CAN1")?.steps[0]?.bus).toBe(1);
+  });
+
+  it("applies declared bus timing when the vehicle connects", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    await manager.connect({ id: "dual-timing", transport, profiles: [dualCanProfile] });
+    expect(transport.busConfigUpdates).toEqual([
+      { bus: 0, bitrate: 500000 },
+      { bus: 1, bitrate: 125000, dataBitrate: 2000000 },
+    ]);
+  });
+
+  it("rejects conflicting timing for the same logical bus", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const conflict: VehicleProfileSource = {
+      name: "test/conflict/profile.yaml",
+      content: `version: 1
+can:
+  buses:
+    1:
+      bitrate: 250000
+`,
+      dbcFiles: [],
+    };
+    await expect(manager.connect({ id: "dual-conflict", transport, profiles: [dualCanProfile, conflict] }))
+      .rejects.toThrow("Conflicting CAN bus 1 timing");
+    expect(transport.isConnected()).toBe(false);
   });
 
   it("routes endpoint-backed queries onto the declared CAN bus", async () => {
@@ -83,6 +115,14 @@ describe("dual-CAN profile contract", () => {
 const dualCanProfile: VehicleProfileSource = {
   name: "test/dual-can/profile.yaml",
   content: `version: 1
+
+can:
+  buses:
+    0:
+      bitrate: 500000
+    1:
+      bitrate: 125000
+      data_bitrate: 2000000
 
 dbc:
   files:

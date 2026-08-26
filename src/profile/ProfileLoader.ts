@@ -6,6 +6,7 @@ import type {
   ExpectPattern,
   LoadedVehicleProfile,
   ProfileAction,
+  ProfileCanBusConfig,
   ProfileByte,
   ProfileEndpoint,
   ProfileMonitorSignal,
@@ -18,6 +19,9 @@ import type {
 
 interface RawProfile {
   version?: unknown;
+  can?: {
+    buses?: Record<string, RawCanBusConfig>;
+  };
   dbc?: {
     files?: Array<{ path?: unknown }>;
   };
@@ -26,6 +30,11 @@ interface RawProfile {
   signals?: Record<string, RawSignal>;
   queries?: Record<string, RawQuery>;
   actions?: Record<string, RawAction>;
+}
+
+interface RawCanBusConfig {
+  bitrate?: unknown;
+  data_bitrate?: unknown;
 }
 
 interface RawEndpoint {
@@ -101,6 +110,7 @@ export class ProfileLoader {
     return {
       name: source.name,
       dbcFiles,
+      canBuses: normalizeCanBuses(raw.can?.buses),
       endpoints,
       queries: Object.entries(raw.queries ?? {}).map(([name, query]) => normalizeQuery(name, query)),
       actions: Object.entries(raw.actions ?? {}).flatMap(([name, action]) => {
@@ -110,6 +120,40 @@ export class ProfileLoader {
       signals: Object.entries(raw.signals ?? {}).flatMap(([name, signal]) => normalizeSignal(name, signal)),
     };
   }
+}
+
+export function mergeProfileCanBusConfigs(profiles: readonly LoadedVehicleProfile[]): ProfileCanBusConfig[] {
+  const merged = new Map<number, ProfileCanBusConfig>();
+  for (const profile of profiles) {
+    for (const config of profile.canBuses) {
+      const existing = merged.get(config.bus);
+      if (existing === undefined) {
+        merged.set(config.bus, { ...config });
+      } else if (existing.bitrate !== config.bitrate || existing.dataBitrate !== config.dataBitrate) {
+        throw new VirtualVehicleError(`Conflicting CAN bus ${config.bus} timing across loaded profiles`);
+      }
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => a.bus - b.bus);
+}
+
+function normalizeCanBuses(raw: Record<string, RawCanBusConfig> | undefined): ProfileCanBusConfig[] {
+  if (raw === undefined) return [];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError("can.buses must be an object keyed by logical bus");
+  }
+  return Object.entries(raw).map(([busKey, config]) => {
+    const path = `can.buses.${busKey}`;
+    const bus = readBus(busKey, path);
+    if (config === null || typeof config !== "object" || Array.isArray(config)) {
+      throw new VirtualVehicleError(`${path} must be an object`);
+    }
+    return {
+      bus,
+      bitrate: readPositiveUint32(config.bitrate, `${path}.bitrate`),
+      ...(config.data_bitrate !== undefined ? { dataBitrate: readPositiveUint32(config.data_bitrate, `${path}.data_bitrate`) } : {}),
+    };
+  }).sort((a, b) => a.bus - b.bus);
 }
 
 function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
@@ -376,6 +420,14 @@ function readBus(raw: unknown, path: string): number {
   const value = readNumber(raw, path);
   if (!Number.isInteger(value) || value < 0 || value > 0xff) {
     throw new VirtualVehicleError(`${path} must be an integer between 0 and 255`);
+  }
+  return value;
+}
+
+function readPositiveUint32(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value <= 0 || value > 0xffffffff) {
+    throw new VirtualVehicleError(`${path} must be a positive 32-bit integer`);
   }
   return value;
 }

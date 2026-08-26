@@ -144,6 +144,9 @@ Only `version` is required.
 ```yaml
 version: 1
 
+can:
+  buses: {}
+
 applies_to: {}
 
 dbc:
@@ -278,12 +281,26 @@ The profile layer accepts bus numbers `0..255` for transport portability. The
 Can Opener SE dual-CAN firmware currently implements buses `0` and `1`; any
 other bus is rejected by that firmware as `invalid_bus`.
 
-`bus` selects a controller that is already configured by firmware. It does not
-set the physical OBD pins or CAN bit rate. The current SE firmware defaults are
-CAN0 at 500 kbit/s and CAN1 at 125 kbit/s; changing those rates is a firmware
-configuration/build concern until a runtime bus-configuration primitive is
-defined. Vehicle profiles must therefore describe which logical bus to use, not
-claim ownership of electrical routing or bit timing.
+Profiles may also define timing for each logical bus. `bitrate` is the
+arbitration/nominal bitrate. Optional `data_bitrate` configures the CAN FD data
+phase when supported by the transport and hardware. Omitting `can.buses` keeps
+the firmware defaults.
+
+```yaml
+can:
+  buses:
+    0:
+      bitrate: 500000
+    1:
+      bitrate: 125000
+      data_bitrate: 2000000
+```
+
+Timing is a bus property, not an endpoint/signal property. If multiple loaded
+profiles define the same bus, their timing must match exactly or profile loading
+fails. The profile does not define physical GPIOs, transceivers, OBD pins, or
+harness routing. `data_bitrate` configures FD timing only; FD frame payload and
+flags are a separate transport capability.
 
 For inline actions that do not reference an endpoint, `bus` may be placed in the
 `send` object:
@@ -604,6 +621,7 @@ active profile does not define `ECU_WAKE`.
 
 ## Firmware Execution Mapping
 
+- `can.buses` configures logical-bus timing after transport connect.
 - Signals with `monitor` use configure monitor plus the monitor notification
   stream.
 - Signals with `send` and `expect` use request/response and return a decoded
@@ -825,6 +843,22 @@ Stop all periodic output: `[0x07, seq]`
 
 Stop if it belongs to a specific bus: `[0x07, seq, bus]`
 
+### Configure bus timing
+
+Runtime timing configuration uses monitor-control opcode `0x08`:
+
+```text
+[0]      0x08
+[1]      sequence
+[2]      bus
+[3..6]   arbitration/nominal bitrate, uint32 LE
+[7..10]  CAN FD data-phase bitrate, uint32 LE; 0 = disabled
+```
+
+The firmware reconfigures only the selected controller. Unsupported timing is
+rejected and the previous working timing is restored. Runtime overrides return
+to firmware defaults after BLE disconnect.
+
 ### Monitor configuration acknowledgement
 
 ```text
@@ -845,6 +879,7 @@ Status codes:
 - `0x05`: invalid CAN ID
 - `0x06`: internal error
 - `0x07`: invalid / unavailable bus
+- `0x08`: invalid / unsupported bitrate configuration
 
 ## BLE Monitor Data
 

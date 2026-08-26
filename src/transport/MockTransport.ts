@@ -1,5 +1,5 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
-import type { MonitorControlRequest, MonitorControlResponse, MonitorSnapshot, VehicleRequest, VehicleTransport } from "./types.js";
+import type { CanBusConfigRequest, CanBusConfigResponse, MonitorControlRequest, MonitorControlResponse, MonitorSnapshot, VehicleRequest, VehicleTransport } from "./types.js";
 
 type SnapshotCallback = (snapshot: MonitorSnapshot) => void;
 
@@ -10,6 +10,7 @@ export class MockTransport implements VehicleTransport {
   readonly monitorCanIds = new Set<number>();
   readonly requests: VehicleRequest[] = [];
   readonly monitorUpdates: MonitorControlRequest[] = [];
+  readonly busConfigUpdates: CanBusConfigRequest[] = [];
 
   private readonly callbacks = new Set<SnapshotCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
@@ -20,6 +21,16 @@ export class MockTransport implements VehicleTransport {
 
   async connect(): Promise<void> {
     this.connected = true;
+  }
+
+  async configureBus(req: CanBusConfigRequest): Promise<CanBusConfigResponse> {
+    this.assertConnected();
+    this.busConfigUpdates.push({ ...req });
+    if (!isValidBus(req.bus)) return { status: "invalid_bus", bus: req.bus };
+    if (!isValidBitrate(req.bitrate) || (req.dataBitrate !== undefined && !isValidBitrate(req.dataBitrate))) {
+      return { status: "invalid_bitrate", bus: req.bus };
+    }
+    return { status: "ok", bus: req.bus };
   }
 
   async disconnect(): Promise<void> {
@@ -241,6 +252,10 @@ function normalizeBus(bus: number | undefined): number {
 
 function isValidBus(bus: number): boolean {
   return Number.isInteger(bus) && bus >= 0 && bus <= 0xff;
+}
+
+function isValidBitrate(bitrate: number): boolean {
+  return Number.isInteger(bitrate) && bitrate > 0 && bitrate <= 0xffffffff;
 }
 
 function isValidCanId(canId: number): boolean {
