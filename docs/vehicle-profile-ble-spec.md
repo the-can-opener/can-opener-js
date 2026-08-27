@@ -292,15 +292,20 @@ can:
     0:
       bitrate: 500000
     1:
-      bitrate: 125000
+      bitrate: auto
       data_bitrate: 2000000
 ```
 
-Timing is a bus property, not an endpoint/signal property. If multiple loaded
-profiles define the same bus, their timing must match exactly or profile loading
-fails. The profile does not define physical GPIOs, transceivers, OBD pins, or
-harness routing. `data_bitrate` configures FD timing only; FD frame payload and
-flags are a separate transport capability.
+Timing is a bus property, not an endpoint/signal property. `bitrate: auto` asks
+the device to detect the nominal rate from passive bus traffic before normal
+operation. Auto-detection is listen-only and therefore does not ACK frames or
+transmit error flags while probing. If the bus is asleep or no valid traffic is
+observed, detection fails and the previous working timing is restored.
+
+If multiple loaded profiles define the same bus, their timing must match exactly
+or profile loading fails. The profile does not define physical GPIOs,
+transceivers, OBD pins, or harness routing. `data_bitrate` configures FD timing
+only; FD frame payload and flags are a separate transport capability.
 
 For inline actions that do not reference an endpoint, `bus` may be placed in the
 `send` object:
@@ -851,7 +856,7 @@ Runtime timing configuration uses monitor-control opcode `0x08`:
 [0]      0x08
 [1]      sequence
 [2]      bus
-[3..6]   arbitration/nominal bitrate, uint32 LE
+[3..6]   arbitration/nominal bitrate, uint32 LE; 0 = auto-detect
 [7..10]  CAN FD data-phase bitrate, uint32 LE; 0 = disabled
 ```
 
@@ -880,6 +885,7 @@ Status codes:
 - `0x06`: internal error
 - `0x07`: invalid / unavailable bus
 - `0x08`: invalid / unsupported bitrate configuration
+- `0x09`: auto-detect failed because no valid traffic matched
 
 ## BLE Monitor Data
 

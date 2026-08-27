@@ -150,7 +150,7 @@ function normalizeCanBuses(raw: Record<string, RawCanBusConfig> | undefined): Pr
     }
     return {
       bus,
-      bitrate: readPositiveUint32(config.bitrate, `${path}.bitrate`),
+      bitrate: readCanBitrate(config.bitrate, `${path}.bitrate`),
       ...(config.data_bitrate !== undefined ? { dataBitrate: readPositiveUint32(config.data_bitrate, `${path}.data_bitrate`) } : {}),
     };
   }).sort((a, b) => a.bus - b.bus);
@@ -422,6 +422,13 @@ function readBus(raw: unknown, path: string): number {
     throw new VirtualVehicleError(`${path} must be an integer between 0 and 255`);
   }
   return value;
+}
+
+function readCanBitrate(raw: unknown, path: string): number | "auto" {
+  if (raw === "auto") {
+    return "auto";
+  }
+  return readPositiveUint32(raw, path);
 }
 
 function readPositiveUint32(raw: unknown, path: string): number {

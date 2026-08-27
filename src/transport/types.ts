@@ -1,11 +1,18 @@
 import type { ActionOptions, CanFrame, CanPayload, DiagnosticBinding } from "../dbc/types.js";
 
-export type CanBusConfigStatus = "ok" | "invalid_bus" | "invalid_bitrate" | "internal_error";
+export type CanBusConfigStatus =
+  | "ok"
+  | "invalid_bus"
+  | "invalid_bitrate"
+  | "auto_detect_failed"
+  | "internal_error";
+
+export type CanBitrate = number | "auto";
 
 export interface CanBusConfigRequest {
   bus: number;
   /** Arbitration/nominal bitrate in bits per second. */
-  bitrate: number;
+  bitrate: CanBitrate;
   /** Optional CAN FD data-phase bitrate in bits per second. */
   dataBitrate?: number;
 }
@@ -13,6 +20,10 @@ export interface CanBusConfigRequest {
 export interface CanBusConfigResponse {
   status: CanBusConfigStatus;
   bus: number;
+  /** Applied nominal bitrate when firmware reports it. */
+  bitrate?: number;
+  /** Applied CAN FD data-phase bitrate; omitted/zero means disabled. */
+  dataBitrate?: number;
 }
 
 export type MonitorControlStatus =
@@ -24,7 +35,8 @@ export type MonitorControlStatus =
   | "invalid_can_id"
   | "internal_error"
   | "invalid_bus"
-  | "invalid_bitrate";
+  | "invalid_bitrate"
+  | "auto_detect_failed";
 
 export type MonitorControlRequest =
   | {
@@ -44,6 +56,9 @@ export interface MonitorControlResponse {
   currentMonitorCount: number;
   /** Bus whose monitor table produced this response. */
   bus?: number;
+  /** Optional extended bus-config ACK fields. */
+  bitrate?: number;
+  dataBitrate?: number;
 }
 
 export interface MonitorSnapshot {

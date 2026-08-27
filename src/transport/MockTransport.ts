@@ -27,10 +27,16 @@ export class MockTransport implements VehicleTransport {
     this.assertConnected();
     this.busConfigUpdates.push({ ...req });
     if (!isValidBus(req.bus)) return { status: "invalid_bus", bus: req.bus };
-    if (!isValidBitrate(req.bitrate) || (req.dataBitrate !== undefined && !isValidBitrate(req.dataBitrate))) {
+    if ((req.bitrate !== "auto" && !isValidBitrate(req.bitrate)) ||
+        (req.dataBitrate !== undefined && !isValidBitrate(req.dataBitrate))) {
       return { status: "invalid_bitrate", bus: req.bus };
     }
-    return { status: "ok", bus: req.bus };
+    return {
+      status: "ok",
+      bus: req.bus,
+      ...(typeof req.bitrate === "number" ? { bitrate: req.bitrate } : {}),
+      ...(req.dataBitrate !== undefined ? { dataBitrate: req.dataBitrate } : {}),
+    };
   }
 
   async disconnect(): Promise<void> {

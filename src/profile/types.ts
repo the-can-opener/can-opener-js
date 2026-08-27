@@ -8,11 +8,13 @@ export interface VehicleProfileSource {
   dbcFiles: DbcFile[];
 }
 
+export type CanBitrate = number | "auto";
+
 export interface ProfileCanBusConfig {
   /** Logical CAN controller selected by endpoint/signal `bus`. */
   bus: number;
   /** Arbitration/nominal bitrate in bits per second. */
-  bitrate: number;
+  bitrate: CanBitrate;
   /** Optional CAN FD data-phase bitrate in bits per second. */
   dataBitrate?: number;
 }

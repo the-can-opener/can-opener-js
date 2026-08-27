@@ -14,7 +14,7 @@ describe("dual-CAN profile contract", () => {
 
     expect(profile.canBuses).toEqual([
       { bus: 0, bitrate: 500000 },
-      { bus: 1, bitrate: 125000, dataBitrate: 2000000 },
+      { bus: 1, bitrate: "auto", dataBitrate: 2000000 },
     ]);
     expect(profile.endpoints.find((endpoint) => endpoint.name === "diagnostics")?.bus).toBe(1);
     expect(profile.signals.find((signal) => signal.name === "RPM_CAN1")?.bus).toBe(1);
@@ -27,7 +27,7 @@ describe("dual-CAN profile contract", () => {
     await manager.connect({ id: "dual-timing", transport, profiles: [dualCanProfile] });
     expect(transport.busConfigUpdates).toEqual([
       { bus: 0, bitrate: 500000 },
-      { bus: 1, bitrate: 125000, dataBitrate: 2000000 },
+      { bus: 1, bitrate: "auto", dataBitrate: 2000000 },
     ]);
   });
 
@@ -121,7 +121,7 @@ can:
     0:
       bitrate: 500000
     1:
-      bitrate: 125000
+      bitrate: auto
       data_bitrate: 2000000
 
 dbc:
