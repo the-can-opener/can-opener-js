@@ -22,7 +22,7 @@ export interface CanBusConfigResponse {
   bus: number;
   /** Applied nominal bitrate when firmware reports it. */
   bitrate?: number;
-  /** Applied CAN FD data-phase bitrate; omitted/zero means disabled. */
+  /** Applied distinct CAN FD data-phase bitrate; zero means the data phase follows nominal. */
   dataBitrate?: number;
 }
 

@@ -282,9 +282,11 @@ Can Opener SE dual-CAN firmware currently implements buses `0` and `1`; any
 other bus is rejected by that firmware as `invalid_bus`.
 
 Profiles may also define timing for each logical bus. `bitrate` is the
-arbitration/nominal bitrate. Optional `data_bitrate` configures the CAN FD data
-phase when supported by the transport and hardware. Omitting `can.buses` keeps
-the firmware defaults.
+arbitration/nominal bitrate. The ESP32-C5 TWAI controller can remain CAN-FD
+capable while carrying Classic CAN. Optional `data_bitrate` selects a distinct
+BRS data-phase rate when supported by the transport and hardware; when omitted,
+the SE firmware keeps FD timing valid by making the data phase follow the nominal
+rate. Omitting `can.buses` keeps the firmware defaults.
 
 ```yaml
 can:
@@ -857,12 +859,14 @@ Runtime timing configuration uses monitor-control opcode `0x08`:
 [1]      sequence
 [2]      bus
 [3..6]   arbitration/nominal bitrate, uint32 LE; 0 = auto-detect
-[7..10]  CAN FD data-phase bitrate, uint32 LE; 0 = disabled
+[7..10]  CAN FD data-phase bitrate, uint32 LE; 0 = follow nominal rate
 ```
 
-The firmware reconfigures only the selected controller. Unsupported timing is
-rejected and the previous working timing is restored. Runtime overrides return
-to firmware defaults after BLE disconnect.
+The firmware reconfigures only the selected controller. On Can Opener SE,
+`data_bitrate = 0` does not disable CAN FD; it means no distinct BRS rate was
+requested, so the firmware programs the FD data phase at the nominal rate.
+Unsupported timing is rejected and the previous working timing is restored.
+Runtime overrides return to firmware defaults after BLE disconnect.
 
 ### Monitor configuration acknowledgement
 
