@@ -144,6 +144,9 @@ Only `version` is required.
 ```yaml
 version: 1
 
+can:
+  buses: {}
+
 applies_to: {}
 
 dbc:
@@ -248,6 +251,79 @@ dbc:
     - path: signals.dbc
 ```
 
+## CAN Bus Selection
+
+Vehicle profiles may route each diagnostic endpoint and passive monitor to a
+logical CAN controller with `bus`. If `bus` is omitted, it defaults to `0` so
+existing single-bus profiles remain valid.
+
+```yaml
+endpoints:
+  powertrain:
+    bus: 0
+    request_id: 0x7E0
+    response_id: 0x7E8
+
+  body:
+    bus: 1
+    request_id: 0x745
+    response_id: 0x765
+
+signals:
+  DOOR_OPEN:
+    monitor:
+      bus: 1
+      message: BODY_STATUS
+      signal: DRIVER_DOOR_OPEN
+```
+
+The profile layer accepts bus numbers `0..255` for transport portability. The
+Can Opener SE dual-CAN firmware currently implements buses `0` and `1`; any
+other bus is rejected by that firmware as `invalid_bus`.
+
+Profiles may also define timing for each logical bus. `bitrate` is the
+arbitration/nominal bitrate. The ESP32-C5 TWAI controller can remain CAN-FD
+capable while carrying Classic CAN. Optional `data_bitrate` selects a distinct
+BRS data-phase rate when supported by the transport and hardware; when omitted,
+the SE firmware keeps FD timing valid by making the data phase follow the nominal
+rate. Omitting `can.buses` keeps the firmware defaults.
+
+```yaml
+can:
+  buses:
+    0:
+      bitrate: 500000
+    1:
+      bitrate: auto
+      data_bitrate: 2000000
+```
+
+Timing is a bus property, not an endpoint/signal property. `bitrate: auto` asks
+the device to detect the nominal rate from passive bus traffic before normal
+operation. Auto-detection is listen-only and therefore does not ACK frames or
+transmit error flags while probing. If the bus is asleep or no valid traffic is
+observed, detection fails and the previous working timing is restored.
+
+If multiple loaded profiles define the same bus, their timing must match exactly
+or profile loading fails. The profile does not define physical GPIOs,
+transceivers, OBD pins, or harness routing. `data_bitrate` configures FD timing
+only; FD frame payload and flags are a separate transport capability.
+
+For inline actions that do not reference an endpoint, `bus` may be placed in the
+`send` object:
+
+```yaml
+actions:
+  EXAMPLE_COMMAND:
+    send:
+      bus: 1
+      request_id: 0x35D
+      request: [0xC1, 0x03]
+```
+
+Endpoint-backed queries, actions, and sequence steps inherit the endpoint's
+`bus`. Passive monitor signals use `signals.<name>.monitor.bus`.
+
 ## Endpoint Rules
 
 An endpoint defines a reusable request/response transport target.
@@ -255,12 +331,14 @@ An endpoint defines a reusable request/response transport target.
 ```yaml
 endpoints:
   obd:
+    bus: 0
     request_id: 0x7DF
     response_ids:
       - range: [0x7E8, 0x7EF]
     timeout_ms: 500
 
   body:
+    bus: 1
     request_id: 0x745
     response_id: 0x765
     timeout_ms: 500
@@ -373,6 +451,7 @@ regular cadence on the CAN bus and decoded with a DBC file.
 signals:
   STEERING_ANGLE:
     monitor:
+      bus: 0
       message: STEERING
       signal: STEERING_ANGLE
 ```
@@ -549,6 +628,7 @@ active profile does not define `ECU_WAKE`.
 
 ## Firmware Execution Mapping
 
+- `can.buses` configures logical-bus timing after transport connect.
 - Signals with `monitor` use configure monitor plus the monitor notification
   stream.
 - Signals with `send` and `expect` use request/response and return a decoded
@@ -578,153 +658,288 @@ signal names before or after a reload.
 
 ## BLE Interface
 
-The BLE interface has three characteristics.
+The BLE transport exposes the same three primitives as before, now with an
+optional logical bus selector. All multibyte integers are little-endian.
 
-The transport layer supports two additional options not expressed in YAML
-profiles:
+Can Opener SE uses:
 
-- `cancelConnection` (disconnect option): signals the transport to abort an
-  in-progress BLE connection attempt rather than waiting for it to complete
-  before disconnecting.
-- `responseIdExtended` (request option): sets `bit1 = tx_can_id_extended` in
-  the BLE request flags for 29-bit extended CAN ID frames. When unset, standard
-  11-bit IDs are assumed.
+- device name: `CanOpener`
+- primary service: `0x0180`
+- request / response characteristic: `0xFEF4`
+- monitor control / acknowledgement: `0xA003`
+- monitor data: `0xA004`
 
-### Request Characteristic
+Omitting the bus selector preserves the original single-bus behavior and routes
+to bus `0`. Dual-CAN transports should always emit the bus-aware layouts.
 
-Properties: Write + Notify.
+### Request flags
 
-The phone writes request packets to the ESP or CAN board. If the request expects
-a CAN response or transmit acknowledgement, firmware places the returned
-response in the notify buffer. A request can be no-response; in that case
-firmware does not send a notification.
+The request `flags` byte is shared by all request layouts:
 
-### Monitor Control Characteristic
+- `0x01`: expect a CAN response
+- `0x02`: transmit CAN ID is extended (29-bit)
+- `0x04`: response CAN ID is extended (29-bit)
+- `0x08`: variable-length ISO-TP payload (v3 layout)
 
-Properties: Write + Notify.
-
-This characteristic configures the monitor data characteristic. The phone writes
-ADD, REMOVE, or CLEAR packets, and firmware notifies a monitor config response.
-
-### Monitor Data Characteristic
-
-Properties: Notify.
-
-Firmware publishes subscribed CAN IDs as frames arrive. If an ID already exists
-in the current monitor snapshot, the newest frame replaces the previous value.
-
-## BLE Monitor Control Packets
-
-ADD:
-
-```text
-[0]    opcode = 0x01
-[1]    seq
-[2]    count
-[3..]  count * u32 CAN IDs
-```
-
-REMOVE:
-
-```text
-[0]    opcode = 0x02
-[1]    seq
-[2]    count
-[3..]  count * u32 CAN IDs
-```
-
-CLEAR:
-
-```text
-[0]  opcode = 0x03
-[1]  seq
-```
-
-## BLE Monitor Config Response
-
-```text
-[0]  opcode = 0x80
-[1]  seq
-[2]  status
-[3]  current_monitor_count
-```
-
-Status codes:
-
-- `0x00` OK
-- `0x01` invalid_opcode
-- `0x02` invalid_length
-- `0x03` monitor_full
-- `0x04` duplicate_id
-- `0x05` invalid_can_id
-- `0x06` internal_error
-
-## BLE Monitor Data Notify Packet
-
-```text
-[0]     opcode = 0x81
-[1]     frame_count
-[2..]   repeated frames, 13 bytes each:
-          u32 can_id
-          u8  dlc
-          u8[8] data
-```
-
-Each frame uses a fixed 13-byte layout so receivers can parse monitor data
-without schema negotiation.
-
-## BLE Request Packets
-
-### Request Only
+### Legacy request-only packet — bus 0
 
 ```text
 [0]      seq
 [1]      flags
-           bit0 = expect_can_response
-           bit1..7 reserved
 [2..5]   tx_can_id
 [6]      dlc 0-8
 [7..14]  payload[8]
 ```
 
-For request-only commands, `expect_can_response` is clear. Firmware transmits
-the CAN frame and does not send a BLE notification.
+Total length: 15 bytes. This remains valid and always targets bus 0.
 
-### Request With Response
+### Dual-CAN request-only packet — v2
+
+```text
+[0]      seq
+[1]      flags
+[2]      bus
+[3..6]   tx_can_id
+[7]      dlc 0-8
+[8..15]  payload[8]
+```
+
+Total length: 16 bytes.
+
+### Legacy request/response packet — bus 0
 
 ```text
 [0]       seq
-[1]       flags
-          bit0 = expect_can_response
-          bit1 = tx_can_id_extended
-          bit2..7 reserved = 0
+[1]       flags (bit0 set)
 [2..5]    tx_can_id
 [6..9]    response_id_start
 [10..13]  response_id_end
-[14..15]  timeout_ms (0-65535 ms)
+[14..15]  timeout_ms
 [16]      dlc 0-8
 [17..24]  payload[8]
 ```
 
-For request/response reads, `expect_can_response` is set. The response ID range
-is inclusive. Firmware always sends one BLE notification for the request. A
-successful CAN response also confirms that the transmit path succeeded well
-enough for the ECU to answer; failures are reported through the response
-`status`.
+Total length: 25 bytes. This remains valid and always targets bus 0.
 
-### Request Notify Response
+### Dual-CAN request/response packet — v2
 
 ```text
-[0]      seq
-[1]      status
-[2..5]   response_can_id
-[6]      payload_len
-[7..]    payload
+[0]       seq
+[1]       flags (bit0 set)
+[2]       bus
+[3..6]    tx_can_id
+[7..10]   response_id_start
+[11..14]  response_id_end
+[15..16]  timeout_ms
+[17]      dlc 0-8
+[18..25]  payload[8]
 ```
 
-The response is always one BLE notification. `payload_len` is the number of
-valid payload bytes in this notification. The maximum payload is limited by the
-BLE characteristic payload size, currently 244 bytes.
+Total length: 26 bytes. The firmware performs ISO-TP response reassembly when a
+response is expected.
+
+### Variable-length ISO-TP request — v3
+
+Use this layout when the application payload itself is longer than a classic
+CAN frame or when firmware-managed ISO-TP request segmentation is desired. Set
+flag `0x08`.
+
+```text
+[0]       seq
+[1]       flags
+[2]       bus
+[3..6]    tx_can_id
+[7..10]   response_id_start
+[11..14]  response_id_end
+[15..16]  timeout_ms
+[17]      payload_length
+[18..]    application payload
+```
+
+The SE firmware handles request segmentation, ECU flow control, block size,
+STmin, response segmentation/reassembly, and UDS response-pending (`7F xx 78`).
+
+### Request notification
+
+Every request that expects a response, and every v3 ISO-TP request, reports
+status through `0xFEF4` notifications:
+
+```text
+[0]       seq
+[1]       status
+[2]       response_flags
+[3..6]    response_can_id
+[7]       payload_len
+[8..]     payload
+```
+
+Response flags:
+
+- `0x01`: response CAN ID is extended
+- `0x02`: payload is a fragment of a larger response
+- `0x04`: more response fragments follow
+
+For fragmented notifications, the first two payload bytes are the little-endian
+fragment offset; the remaining bytes are response data. Reassemble by offset and
+sequence before decoding the profile query.
+
+SE request status values:
+
+- `0x00`: OK
+- `0xE1`: bad packet length
+- `0xE2`: bad DLC
+- `0xE3`: CAN transmit failure
+- `0xE4`: CAN receive timeout
+- `0xE5`: invalid ISO-TP exchange
+- `0xE6`: ISO-TP response overflow
+- `0xE7`: invalid CAN ID
+- `0xE8`: invalid / unavailable bus
+
+## BLE Monitor Control
+
+Monitor tables are independent per bus. The Can Opener SE firmware currently
+allows up to 16 subscribed CAN IDs on each bus.
+
+### ADD / REMOVE — legacy bus 0
+
+```text
+[0]    opcode = 0x01 ADD or 0x02 REMOVE
+[1]    seq
+[2]    count
+[3..]  count * u32 CAN IDs
+```
+
+### ADD / REMOVE — dual-CAN
+
+```text
+[0]    opcode = 0x01 ADD or 0x02 REMOVE
+[1]    seq
+[2]    bus
+[3]    count
+[4..]  count * u32 CAN IDs
+```
+
+### CLEAR
+
+Legacy bus 0: `[0x03, seq]`
+
+Dual-CAN: `[0x03, seq, bus]`
+
+### Stream all frames
+
+Start: `[0x04, seq, bus]`
+
+Stop: `[0x05, seq, bus]`
+
+### Firmware-timed periodic frame
+
+Start uses 19 bytes:
+
+```text
+[0]       opcode = 0x06
+[1]       seq
+[2]       bus
+[3..4]    interval_ms (minimum 10 ms)
+[5..8]    can_id
+[9]       dlc
+[10..17]  payload[8]
+[18]      extended (0 or 1)
+```
+
+Stop all periodic output: `[0x07, seq]`
+
+Stop if it belongs to a specific bus: `[0x07, seq, bus]`
+
+### Configure bus timing
+
+Runtime timing configuration uses monitor-control opcode `0x08`:
+
+```text
+[0]      0x08
+[1]      sequence
+[2]      bus
+[3..6]   arbitration/nominal bitrate, uint32 LE; 0 = auto-detect
+[7..10]  CAN FD data-phase bitrate, uint32 LE; 0 = follow nominal rate
+```
+
+The firmware reconfigures only the selected controller. On Can Opener SE,
+`data_bitrate = 0` does not disable CAN FD; it means no distinct BRS rate was
+requested, so the firmware programs the FD data phase at the nominal rate.
+Unsupported timing is rejected and the previous working timing is restored.
+Runtime overrides return to firmware defaults after BLE disconnect.
+
+### Monitor configuration acknowledgement
+
+```text
+[0]  opcode = 0x80
+[1]  seq
+[2]  status
+[3]  current_monitor_count for this bus
+[4]  bus
+```
+
+Status codes:
+
+- `0x00`: OK
+- `0x01`: invalid opcode
+- `0x02`: invalid length
+- `0x03`: monitor full
+- `0x04`: duplicate ID
+- `0x05`: invalid CAN ID
+- `0x06`: internal error
+- `0x07`: invalid / unavailable bus
+- `0x08`: invalid / unsupported bitrate configuration
+- `0x09`: auto-detect failed because no valid traffic matched
+
+## BLE Monitor Data
+
+Each frame payload remains 13 bytes: `u32 can_id`, `u8 dlc`, `u8 data[8]`.
+
+For backward compatibility, subscribed CAN0 snapshots keep the original format:
+
+```text
+[0]     opcode = 0x81
+[1]     frame_count
+[2..]   repeated 13-byte frames
+```
+
+Bus-aware snapshots from nonzero buses use:
+
+```text
+[0]     opcode = 0x82
+[1]     bus
+[2]     frame_count
+[3..]   repeated 13-byte frames
+```
+
+All-frame streaming uses:
+
+```text
+[0]     opcode = 0x83
+[1]     bus
+[2]     frame_count
+[3..]   repeated 13-byte frames
+```
+
+A transport must attach the decoded bus number to each delivered `CanFrame`.
+The virtual vehicle layer keys subscriptions by `(bus, can_id)`, so the same CAN
+ID may be monitored independently on both channels without collision.
+
+## Transport Mapping Rules
+
+A `VehicleTransport` implementation for Can Opener SE must map the generic
+profile contract onto firmware as follows:
+
+- `CanFrame.bus` -> request packet bus byte; omitted means `0`.
+- `MonitorControlRequest.bus` -> monitor-control bus byte; omitted means `0`.
+- endpoint `bus` -> outbound query/action frame bus.
+- monitor `bus` -> monitor subscription bus and inbound frame identity.
+- v2 request layouts are sufficient for classic 0-8 byte request payloads.
+- v3 is required for variable-length ISO-TP request payloads.
+- legacy layouts may be used only for bus 0 compatibility.
+
+Bitrate and physical OBD/harness routing are deliberately outside this
+application/profile protocol.
 
 ## Final Rule
 

@@ -8,6 +8,17 @@ export interface VehicleProfileSource {
   dbcFiles: DbcFile[];
 }
 
+export type CanBitrate = number | "auto";
+
+export interface ProfileCanBusConfig {
+  /** Logical CAN controller selected by endpoint/signal `bus`. */
+  bus: number;
+  /** Arbitration/nominal bitrate in bits per second. */
+  bitrate: CanBitrate;
+  /** Optional CAN FD data-phase bitrate in bits per second. */
+  dataBitrate?: number;
+}
+
 export interface ResponseIdRange {
   start: number;
   end: number;
@@ -17,6 +28,8 @@ export interface ProfileEndpoint {
   name: string;
   requestId: number;
   responseRanges: ResponseIdRange[];
+  /** Logical CAN controller. Omitted values default to bus 0. */
+  bus?: number;
   extended?: boolean;
   timeoutMs?: number;
 }
@@ -46,6 +59,8 @@ export interface ProfileValueNormalization {
 export interface RequestStep {
   endpoint?: string;
   requestId?: number;
+  /** Used by inline request_id actions. Endpoint-backed steps inherit endpoint.bus. */
+  bus?: number;
   send: Uint8Array;
   expect?: ExpectPattern;
 }
@@ -82,12 +97,15 @@ export interface ProfileMonitorSignal {
   name: string;
   message: string;
   signal: string;
+  /** Logical CAN controller. Omitted values default to bus 0. */
+  bus?: number;
   normalize?: ProfileValueNormalization;
 }
 
 export interface LoadedVehicleProfile {
   name: string;
   dbcFiles: DbcFile[];
+  canBuses: ProfileCanBusConfig[];
   endpoints: ProfileEndpoint[];
   queries: ProfileQuery[];
   actions: ProfileAction[];

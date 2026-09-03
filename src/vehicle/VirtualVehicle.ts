@@ -41,6 +41,7 @@ export interface VirtualVehicleInternals {
 
 interface ResolvedSubscriptionRequest {
   state: VehicleSignalState;
+  bus?: number;
   normalize?: ProfileValueNormalization;
 }
 
@@ -239,6 +240,7 @@ export class VirtualVehicle {
             monitor.signal,
           ),
         },
+        ...(monitor.bus !== undefined ? { bus: monitor.bus } : {}),
         ...(monitor.normalize !== undefined
           ? { normalize: monitor.normalize }
           : {}),

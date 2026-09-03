@@ -7,12 +7,19 @@ import type { VehicleState } from "../vehicle/VehicleState.js";
 
 interface ActiveSubscription {
   state: VehicleSignalState;
+  bus: number;
   normalize?: ProfileValueNormalization;
 }
 
 interface SubscriptionRequest {
   state: VehicleSignalState;
+  bus?: number;
   normalize?: ProfileValueNormalization;
+}
+
+interface FrameRef {
+  bus: number;
+  canId: number;
 }
 
 export interface SubscriptionRefreshStatus {
@@ -23,8 +30,8 @@ const REFRESH_HZ_WINDOW_MS = 1000;
 
 export class SubscriptionController {
   private readonly activeBySignal = new Map<string, ActiveSubscription>();
-  private readonly activeByCanId = new Map<number, Map<string, ActiveSubscription>>();
-  private readonly monitoredCanIdSet = new Set<number>();
+  private readonly activeByFrameKey = new Map<string, Map<string, ActiveSubscription>>();
+  private readonly monitoredFrameKeys = new Set<string>();
   private readonly frameHistoryByName = new Map<string, number[]>();
 
   constructor(
@@ -38,29 +45,34 @@ export class SubscriptionController {
   }
 
   async addMany(requests: SubscriptionRequest[]): Promise<boolean> {
-    const affectedCanIds = new Set<number>();
+    const affectedFrames = new Map<string, FrameRef>();
 
     for (const { state } of requests) {
-      this.removeActive(state.name, affectedCanIds);
+      this.removeActive(state.name, affectedFrames);
     }
 
     for (const request of requests) {
+      const bus = normalizeBus(request.bus);
       const active: ActiveSubscription = {
         state: request.state,
+        bus,
         ...(request.normalize !== undefined ? { normalize: request.normalize } : {}),
       };
+      const ref = { bus, canId: request.state.signal.canId };
+      const key = frameKey(ref.bus, ref.canId);
 
       this.activeBySignal.set(request.state.name, active);
-      this.getOrCreateFrameSubscriptions(request.state.signal.canId).set(request.state.name, active);
-      affectedCanIds.add(request.state.signal.canId);
+      this.getOrCreateFrameSubscriptions(ref).set(request.state.name, active);
+      affectedFrames.set(key, ref);
     }
 
-    await this.syncTransportSubscriptions(affectedCanIds);
+    await this.syncTransportSubscriptions(affectedFrames);
     return true;
   }
 
   handleFrame(frame: CanFrame): void {
-    const activeSignals = this.activeByCanId.get(frame.canId);
+    const bus = normalizeBus(frame.bus);
+    const activeSignals = this.activeByFrameKey.get(frameKey(bus, frame.canId));
     if (activeSignals === undefined) {
       return;
     }
@@ -97,13 +109,13 @@ export class SubscriptionController {
   }
 
   async cancelMany(signalNames: readonly string[]): Promise<void> {
-    const affectedCanIds = new Set<number>();
+    const affectedFrames = new Map<string, FrameRef>();
 
     for (const signalName of signalNames) {
-      this.removeActive(signalName, affectedCanIds);
+      this.removeActive(signalName, affectedFrames);
     }
 
-    await this.syncTransportSubscriptions(affectedCanIds);
+    await this.syncTransportSubscriptions(affectedFrames);
   }
 
   count(): number {
@@ -111,29 +123,40 @@ export class SubscriptionController {
   }
 
   monitoredCanIds(): number[] {
-    return Array.from(this.monitoredCanIdSet);
+    return Array.from(
+      new Set(Array.from(this.monitoredFrameKeys, (key) => parseFrameKey(key).canId)),
+    );
   }
 
   cancelAll(): void {
+    const buses = new Set<number>([0]);
+    for (const key of this.monitoredFrameKeys) {
+      buses.add(parseFrameKey(key).bus);
+    }
+
     this.activeBySignal.clear();
-    this.activeByCanId.clear();
-    this.monitoredCanIdSet.clear();
+    this.activeByFrameKey.clear();
+    this.monitoredFrameKeys.clear();
     this.frameHistoryByName.clear();
-    void this.transport.updateMonitor({ operation: "clear" });
+
+    for (const bus of buses) {
+      void this.transport.updateMonitor({ operation: "clear", bus });
+    }
   }
 
-  private getOrCreateFrameSubscriptions(canId: number): Map<string, ActiveSubscription> {
-    const existing = this.activeByCanId.get(canId);
+  private getOrCreateFrameSubscriptions(ref: FrameRef): Map<string, ActiveSubscription> {
+    const key = frameKey(ref.bus, ref.canId);
+    const existing = this.activeByFrameKey.get(key);
     if (existing !== undefined) {
       return existing;
     }
 
     const created = new Map<string, ActiveSubscription>();
-    this.activeByCanId.set(canId, created);
+    this.activeByFrameKey.set(key, created);
     return created;
   }
 
-  private removeActive(signalName: string, affectedCanIds: Set<number>): void {
+  private removeActive(signalName: string, affectedFrames: Map<string, FrameRef>): void {
     const active = this.activeBySignal.get(signalName);
     if (active === undefined) {
       return;
@@ -141,35 +164,38 @@ export class SubscriptionController {
 
     this.activeBySignal.delete(signalName);
     this.frameHistoryByName.delete(signalName);
-    const frameSubscriptions = this.activeByCanId.get(active.state.signal.canId);
+    const ref = { bus: active.bus, canId: active.state.signal.canId };
+    const key = frameKey(ref.bus, ref.canId);
+    const frameSubscriptions = this.activeByFrameKey.get(key);
     frameSubscriptions?.delete(signalName);
 
     if (frameSubscriptions?.size === 0) {
-      this.activeByCanId.delete(active.state.signal.canId);
+      this.activeByFrameKey.delete(key);
     }
 
-    affectedCanIds.add(active.state.signal.canId);
+    affectedFrames.set(key, ref);
   }
 
-  private async syncTransportSubscriptions(canIds: Set<number>): Promise<void> {
-    for (const canId of canIds) {
-      await this.syncTransportSubscription(canId);
+  private async syncTransportSubscriptions(affectedFrames: Map<string, FrameRef>): Promise<void> {
+    for (const ref of affectedFrames.values()) {
+      await this.syncTransportSubscription(ref);
     }
   }
 
-  private async syncTransportSubscription(canId: number): Promise<void> {
-    const frameSubscriptions = this.activeByCanId.get(canId);
+  private async syncTransportSubscription(ref: FrameRef): Promise<void> {
+    const key = frameKey(ref.bus, ref.canId);
+    const frameSubscriptions = this.activeByFrameKey.get(key);
     if (frameSubscriptions === undefined || frameSubscriptions.size === 0) {
-      if (this.monitoredCanIdSet.has(canId)) {
-        await this.applyMonitorUpdate({ operation: "remove", canIds: [canId] });
-        this.monitoredCanIdSet.delete(canId);
+      if (this.monitoredFrameKeys.has(key)) {
+        await this.applyMonitorUpdate({ operation: "remove", canIds: [ref.canId], bus: ref.bus });
+        this.monitoredFrameKeys.delete(key);
       }
       return;
     }
 
-    if (!this.monitoredCanIdSet.has(canId)) {
-      await this.applyMonitorUpdate({ operation: "add", canIds: [canId] });
-      this.monitoredCanIdSet.add(canId);
+    if (!this.monitoredFrameKeys.has(key)) {
+      await this.applyMonitorUpdate({ operation: "add", canIds: [ref.canId], bus: ref.bus });
+      this.monitoredFrameKeys.add(key);
     }
   }
 
@@ -195,6 +221,22 @@ export class SubscriptionController {
     this.frameHistoryByName.set(signalName, recentHistory);
     return recentHistory;
   }
+}
+
+function normalizeBus(bus: number | undefined): number {
+  return bus ?? 0;
+}
+
+function frameKey(bus: number, canId: number): string {
+  return `${bus}:${canId}`;
+}
+
+function parseFrameKey(key: string): FrameRef {
+  const separator = key.indexOf(":");
+  return {
+    bus: Number(key.slice(0, separator)),
+    canId: Number(key.slice(separator + 1)),
+  };
 }
 
 function decodeSubscriptionStateValue(state: VehicleSignalState, value: unknown): unknown {

@@ -1,7 +1,7 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
 import type { ExpectPattern, ProfileEndpoint, RequestStep } from "./types.js";
 
-export function buildRequestFrame(endpoint: Pick<ProfileEndpoint, "requestId" | "extended">, payload: Uint8Array): CanFrame {
+export function buildRequestFrame(endpoint: Pick<ProfileEndpoint, "requestId" | "extended" | "bus">, payload: Uint8Array): CanFrame {
   const data = new Uint8Array(8);
   data.set(payload.slice(0, 8));
   return {
@@ -9,6 +9,7 @@ export function buildRequestFrame(endpoint: Pick<ProfileEndpoint, "requestId" | 
     dlc: Math.min(payload.length, 8),
     data,
     ...(endpoint.extended !== undefined ? { extended: endpoint.extended } : {}),
+    ...(endpoint.bus !== undefined ? { bus: endpoint.bus } : {}),
   };
 }
 
@@ -19,9 +20,15 @@ export function buildStepFrame(step: RequestStep, endpoint?: ProfileEndpoint): C
   }
 
   return buildRequestFrame(
-    endpoint?.extended === undefined
-      ? { requestId }
-      : { requestId, extended: endpoint.extended },
+    {
+      requestId,
+      ...(endpoint?.extended !== undefined ? { extended: endpoint.extended } : {}),
+      ...(endpoint?.bus !== undefined
+        ? { bus: endpoint.bus }
+        : step.bus !== undefined
+          ? { bus: step.bus }
+          : {}),
+    },
     step.send,
   );
 }

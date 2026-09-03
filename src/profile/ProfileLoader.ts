@@ -6,6 +6,7 @@ import type {
   ExpectPattern,
   LoadedVehicleProfile,
   ProfileAction,
+  ProfileCanBusConfig,
   ProfileByte,
   ProfileEndpoint,
   ProfileMonitorSignal,
@@ -18,6 +19,9 @@ import type {
 
 interface RawProfile {
   version?: unknown;
+  can?: {
+    buses?: Record<string, RawCanBusConfig>;
+  };
   dbc?: {
     files?: Array<{ path?: unknown }>;
   };
@@ -28,10 +32,16 @@ interface RawProfile {
   actions?: Record<string, RawAction>;
 }
 
+interface RawCanBusConfig {
+  bitrate?: unknown;
+  data_bitrate?: unknown;
+}
+
 interface RawEndpoint {
   request_id?: unknown;
   response_id?: unknown;
   response_ids?: unknown[];
+  bus?: unknown;
   extended?: unknown;
   timeout_ms?: unknown;
 }
@@ -45,6 +55,7 @@ interface RawSignal {
   monitor?: {
     message?: unknown;
     signal?: unknown;
+    bus?: unknown;
   };
   normalize?: unknown;
   state?: unknown;
@@ -99,6 +110,7 @@ export class ProfileLoader {
     return {
       name: source.name,
       dbcFiles,
+      canBuses: normalizeCanBuses(raw.can?.buses),
       endpoints,
       queries: Object.entries(raw.queries ?? {}).map(([name, query]) => normalizeQuery(name, query)),
       actions: Object.entries(raw.actions ?? {}).flatMap(([name, action]) => {
@@ -108,6 +120,40 @@ export class ProfileLoader {
       signals: Object.entries(raw.signals ?? {}).flatMap(([name, signal]) => normalizeSignal(name, signal)),
     };
   }
+}
+
+export function mergeProfileCanBusConfigs(profiles: readonly LoadedVehicleProfile[]): ProfileCanBusConfig[] {
+  const merged = new Map<number, ProfileCanBusConfig>();
+  for (const profile of profiles) {
+    for (const config of profile.canBuses) {
+      const existing = merged.get(config.bus);
+      if (existing === undefined) {
+        merged.set(config.bus, { ...config });
+      } else if (existing.bitrate !== config.bitrate || existing.dataBitrate !== config.dataBitrate) {
+        throw new VirtualVehicleError(`Conflicting CAN bus ${config.bus} timing across loaded profiles`);
+      }
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => a.bus - b.bus);
+}
+
+function normalizeCanBuses(raw: Record<string, RawCanBusConfig> | undefined): ProfileCanBusConfig[] {
+  if (raw === undefined) return [];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError("can.buses must be an object keyed by logical bus");
+  }
+  return Object.entries(raw).map(([busKey, config]) => {
+    const path = `can.buses.${busKey}`;
+    const bus = readBus(busKey, path);
+    if (config === null || typeof config !== "object" || Array.isArray(config)) {
+      throw new VirtualVehicleError(`${path} must be an object`);
+    }
+    return {
+      bus,
+      bitrate: readCanBitrate(config.bitrate, `${path}.bitrate`),
+      ...(config.data_bitrate !== undefined ? { dataBitrate: readPositiveUint32(config.data_bitrate, `${path}.data_bitrate`) } : {}),
+    };
+  }).sort((a, b) => a.bus - b.bus);
 }
 
 function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
@@ -124,6 +170,7 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     name,
     requestId: readNumber(raw.request_id, `endpoints.${name}.request_id`),
     responseRanges,
+    ...(raw.bus !== undefined ? { bus: readBus(raw.bus, `endpoints.${name}.bus`) } : {}),
     ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
   };
@@ -198,6 +245,7 @@ function normalizeSignal(name: string, raw: RawSignal): ProfileMonitorSignal[] {
     name,
     message: readString(raw.monitor.message, `signals.${name}.monitor.message`),
     signal: readString(raw.monitor.signal, `signals.${name}.monitor.signal`),
+    ...(raw.monitor.bus !== undefined ? { bus: readBus(raw.monitor.bus, `signals.${name}.monitor.bus`) } : {}),
     ...(normalize !== undefined ? { normalize } : {}),
   }];
 }
@@ -337,10 +385,11 @@ function readSendStep(
   }
 
   if (raw !== null && typeof raw === "object") {
-    const send = raw as { request_id?: unknown; request?: unknown };
+    const send = raw as { request_id?: unknown; bus?: unknown; request?: unknown };
     if (send.request_id !== undefined && send.request !== undefined) {
       return {
         requestId: readNumber(send.request_id, `${path}.request_id`),
+        ...(send.bus !== undefined ? { bus: readBus(send.bus, `${path}.bus`) } : {}),
         send: Uint8Array.from(readByteArray(
           Array.isArray(send.request) ? send.request : undefined,
           `${path}.request`,
@@ -363,6 +412,29 @@ function readByte(raw: unknown, path: string): number {
   const value = readNumber(raw, path);
   if (!Number.isInteger(value) || value < 0 || value > 0xff) {
     throw new VirtualVehicleError(`${path} must be a byte between 0 and 255`);
+  }
+  return value;
+}
+
+function readBus(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new VirtualVehicleError(`${path} must be an integer between 0 and 255`);
+  }
+  return value;
+}
+
+function readCanBitrate(raw: unknown, path: string): number | "auto" {
+  if (raw === "auto") {
+    return "auto";
+  }
+  return readPositiveUint32(raw, path);
+}
+
+function readPositiveUint32(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value <= 0 || value > 0xffffffff) {
+    throw new VirtualVehicleError(`${path} must be a positive 32-bit integer`);
   }
   return value;
 }
