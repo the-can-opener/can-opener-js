@@ -76,6 +76,7 @@ interface RawAction {
   endpoint?: unknown;
   send?: unknown;
   expect?: unknown;
+  batch?: unknown;
   steps?: RawStep[];
 }
 
@@ -84,6 +85,8 @@ type RawStep = {
   ref?: unknown;
   send?: unknown;
   expect?: unknown;
+  timeout_ms?: unknown;
+  delay_ms?: unknown;
 };
 
 export class ProfileLoader {
@@ -232,6 +235,7 @@ function normalizeAction(
   return {
     name,
     ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(raw.batch !== undefined ? { batch: readBoolean(raw.batch, `actions.${name}.batch`) } : {}),
     steps,
   };
 }
@@ -287,6 +291,8 @@ function expandSteps(
     return [{
       ...readSendStep(step.send, "steps.send", stepEndpoint),
       ...(step.expect !== undefined ? { expect: normalizeExpect(step.expect, "steps.expect") } : {}),
+      ...(step.timeout_ms !== undefined ? { timeoutMs: readDurationMs(step.timeout_ms, "steps.timeout_ms") } : {}),
+      ...(step.delay_ms !== undefined ? { delayMs: readDurationMs(step.delay_ms, "steps.delay_ms") } : {}),
     }];
   });
 }
@@ -429,6 +435,14 @@ function readCanBitrate(raw: unknown, path: string): number | "auto" {
     return "auto";
   }
   return readPositiveUint32(raw, path);
+}
+
+function readDurationMs(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new VirtualVehicleError(`${path} must be an integer between 0 and 65535 milliseconds`);
+  }
+  return value;
 }
 
 function readPositiveUint32(raw: unknown, path: string): number {

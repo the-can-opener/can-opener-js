@@ -83,12 +83,65 @@ export interface VehicleRequest {
   action?: ActionOptions;
 }
 
+/**
+ * One step of a batched request. Steps share the batch's bus; `txFrame.bus`
+ * must therefore match `VehicleBatchRequest.bus` (or be omitted).
+ */
+export interface VehicleBatchStep extends VehicleRequest {
+  /** Gap the device inserts after this step before transmitting the next one. */
+  delayAfterMs?: number;
+}
+
+export interface VehicleBatchRequest {
+  signalName?: string;
+  /** Logical CAN controller for every step. Omitted values default to bus 0. */
+  bus?: number;
+  /**
+   * Keep executing later steps after a step fails at the transport level
+   * (timeout, TX failure, ISO-TP error). Defaults to stopping at the first
+   * failure so the remaining steps are reported as `skipped`.
+   */
+  continueOnError?: boolean;
+  steps: readonly VehicleBatchStep[];
+}
+
+export type VehicleBatchStepStatus =
+  /** The frame was sent and, if a response was expected, one arrived. */
+  | "ok"
+  /** A response was expected but the ECU did not answer within the timeout. */
+  | "no_response"
+  /** The device reported a transport error for this step. */
+  | "error"
+  /** An earlier step failed and the device never executed this one. */
+  | "skipped";
+
+export interface VehicleBatchStepResult {
+  status: VehicleBatchStepStatus;
+  /** Response payload for `ok` steps that expected a response. */
+  payload?: CanPayload;
+  responseCanId?: number;
+  /** Human-readable detail for `error` results. */
+  error?: string;
+}
+
+export interface VehicleBatchResponse {
+  /** One entry per requested step, in request order. */
+  steps: VehicleBatchStepResult[];
+}
+
 export interface VehicleTransport {
   connect(): Promise<void>;
   /** Optional transport capability used when a profile declares `can.buses`. */
   configureBus?(req: CanBusConfigRequest): Promise<CanBusConfigResponse>;
   disconnect(options?: VehicleDisconnectOptions): Promise<void>;
   sendRequest(req: VehicleRequest): Promise<CanPayload | undefined>;
+  /**
+   * Optional capability: transmit several CAN frames back-to-back on one bus in
+   * a single device transaction. Batch-level failures (malformed request,
+   * device busy, link loss) reject the promise; per-step outcomes are reported
+   * in the response so callers can decide how to treat partial execution.
+   */
+  sendRequestBatch?(req: VehicleBatchRequest): Promise<VehicleBatchResponse>;
   updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse>;
   onMonitorSnapshot(cb: (snapshot: MonitorSnapshot) => void): () => void;
 }

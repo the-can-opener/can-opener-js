@@ -63,6 +63,10 @@ export interface RequestStep {
   bus?: number;
   send: Uint8Array;
   expect?: ExpectPattern;
+  /** Overrides the endpoint response timeout for this step. */
+  timeoutMs?: number;
+  /** Gap inserted after this step before the next step is transmitted. Defaults to 20 ms. */
+  delayMs?: number;
 }
 
 export interface ProfileQuery {
@@ -79,6 +83,12 @@ export interface ProfileQuery {
 export interface ProfileAction {
   name: string;
   endpoint?: string;
+  /**
+   * When `false`, multi-step actions are sent one transport transaction at a
+   * time even if the transport can batch them. Defaults to batching, which
+   * lets the device run the steps back-to-back without BLE round trips.
+   */
+  batch?: boolean;
   steps: RequestStep[];
 }
 

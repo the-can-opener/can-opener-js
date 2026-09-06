@@ -32,3 +32,15 @@ export class NoEcuResponseError extends VirtualVehicleError {
     this.name = "NoEcuResponseError";
   }
 }
+
+/**
+ * Thrown by `VehicleTransport.sendRequestBatch` when the connected device does
+ * not implement batched requests. Nothing was transmitted on the bus, so the
+ * caller can safely replay the same steps as individual requests.
+ */
+export class BatchUnsupportedError extends VirtualVehicleError {
+  constructor(message = "Device does not support batched requests") {
+    super(message);
+    this.name = "BatchUnsupportedError";
+  }
+}

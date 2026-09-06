@@ -98,4 +98,80 @@ actions:
       },
     ]);
   });
+
+  it("loads per-step timing and the action batch opt-out", () => {
+    const [profile] = new ProfileLoader().load([
+      {
+        name: "test/step-timing/profile.yaml",
+        content: `version: 1
+
+dbc:
+  files:
+    - path: signals.dbc
+
+endpoints:
+  body:
+    request_id: 0x745
+    response_id: 0x765
+    timeout_ms: 500
+
+sequences:
+  prep:
+    steps:
+      - send: [0x02, 0x10, 0x81]
+        expect: [0x50, 0x81]
+        timeout_ms: 250
+        delay_ms: 20
+
+actions:
+  HORN:
+    endpoint: body
+    batch: false
+    steps:
+      - ref: sequences.prep
+      - send: [0x04, 0x30, 0x30, 0x00, 0x01]
+        expect: [0x70, 0x30, 0x01]
+`,
+        dbcFiles: [testVehicleDbc],
+      },
+    ]);
+    if (profile === undefined) {
+      throw new Error("Expected profile to load");
+    }
+
+    expect(profile.actions).toHaveLength(1);
+    expect(profile.actions[0]).toMatchObject({
+      name: "HORN",
+      endpoint: "body",
+      batch: false,
+    });
+    expect(profile.actions[0]?.steps[0]).toMatchObject({ timeoutMs: 250, delayMs: 20 });
+    expect(profile.actions[0]?.steps[1]).not.toHaveProperty("delayMs");
+  });
+
+  it("rejects out-of-range step timing", () => {
+    const load = (field: string, value: string) => () => new ProfileLoader().load([
+      {
+        name: "test/bad-timing/profile.yaml",
+        content: `version: 1
+
+endpoints:
+  body:
+    request_id: 0x745
+
+actions:
+  HORN:
+    endpoint: body
+    steps:
+      - send: [0x01]
+        ${field}: ${value}
+`,
+        dbcFiles: [],
+      },
+    ]);
+
+    expect(load("delay_ms", "70000")).toThrow(/steps\.delay_ms/u);
+    expect(load("timeout_ms", "-1")).toThrow(/steps\.timeout_ms/u);
+    expect(load("delay_ms", "1.5")).toThrow(/steps\.delay_ms/u);
+  });
 });

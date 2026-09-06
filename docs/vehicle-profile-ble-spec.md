@@ -364,6 +364,19 @@ This sends bytes, waits for a response, and validates the response prefix. If
 `expect` is omitted, the step sends bytes only and does not wait for a response.
 `send` and `expect` always belong to the same step.
 
+A step may override its timing:
+
+```yaml
+- send: [0x10, 0xC0]
+  expect: [0x50, 0xC0]
+  timeout_ms: 300   # how long to wait for the response (1..65535, default 500)
+  delay_ms: 20      # gap after this step before the next one (0..65535, default 20)
+```
+
+`timeout_ms` is only meaningful with `expect`. `delay_ms` defaults to 20 ms;
+set `0` to send the next frame immediately. The gap is honoured whether the
+steps run as one firmware batch or as separate transactions.
+
 ## Expect Matching Rules
 
 `expect` is a response pattern. By default, an `expect` array is a prefix match
@@ -620,6 +633,35 @@ actions:
 Actions may return nothing. If `expect` validation is used, actions return
 boolean success or failure.
 
+### Multi-step execution
+
+When the transport supports it, consecutive same-bus steps of a multi-step
+action are sent to the firmware as **one batch** (see "Batch request — v4")
+and executed back-to-back on the CAN side, so inter-frame timing is not
+subject to BLE round-trip jitter. Steps that change bus start a new batch;
+steps that do not fit the device limits (14 steps, 244-byte write, 30 s total
+budget) are split across consecutive batches in order.
+
+Batch semantics differ from step-by-step execution in one way: the firmware
+stops after a step whose *transport* fails (TX failure, no ECU response) but
+cannot evaluate `expect` patterns, so a mismatching response does not stop the
+later steps of the same batch from being transmitted. The action still returns
+`false` on the first mismatch. Profiles that need each step gated on the
+previous response should opt out:
+
+```yaml
+actions:
+  HORN:
+    endpoint: body
+    batch: false
+    steps: [...]
+```
+
+A `no_response` result on any batched step still triggers `ECU_WAKE` and a
+single retry of the whole action. Transports without batch support, or devices
+whose firmware silently ignores the batch packet, fall back to one transaction
+per step with the same `delay_ms` gaps.
+
 `ECU_WAKE` is an internal, request-only action used to recover a sleeping ECU.
 When a different action receives no ECU response, the runtime sends `ECU_WAKE`
 and retries the full original action once. It does not wake or retry after an
@@ -638,7 +680,9 @@ active profile does not define `ECU_WAKE`.
 - Actions without `expect` use request-only.
 - Actions using the `{request_id, request}` inline form use request-only
   without response bounds, regardless of whether an endpoint is also present.
-- Sequences expand into multiple BLE request transactions.
+- Sequences expand inline into the action's step list; consecutive same-bus
+  steps are sent as one v4 batch when the transport supports it, otherwise as
+  multiple BLE request transactions.
 
 ## Runtime Profile Reloading
 
@@ -680,6 +724,7 @@ The request `flags` byte is shared by all request layouts:
 - `0x02`: transmit CAN ID is extended (29-bit)
 - `0x04`: response CAN ID is extended (29-bit)
 - `0x08`: variable-length ISO-TP payload (v3 layout)
+- `0x10`: batch of classic CAN steps (v4 layout)
 
 ### Legacy request-only packet — bus 0
 
@@ -759,10 +804,72 @@ flag `0x08`.
 The SE firmware handles request segmentation, ECU flow control, block size,
 STmin, response segmentation/reassembly, and UDS response-pending (`7F xx 78`).
 
+### Batch request — v4
+
+Use this layout to run several classic CAN steps on one bus back-to-back
+without a BLE round trip between them. Set flag `0x10`; other request flag bits
+are ignored and each step carries its own flags.
+
+```text
+[0]       seq
+[1]       flags (0x10)
+[2]       bus
+[3]       batch_flags: 0x01 continue after a failing step (default: stop)
+[4]       step_count 1..14
+[5..]     steps
+```
+
+Each step is 16 bytes, or 26 bytes when it expects a response:
+
+```text
+[0]       step_flags: 0x01 expect response, 0x02 tx ID extended, 0x04 response ID extended
+[1..4]    tx_can_id
+[5]       dlc 0-8
+[6..13]   payload[8]
+[14..15]  post_delay_ms (gap before the next step)
+[16..19]  response_id_start   (expect only)
+[20..23]  response_id_end     (expect only)
+[24..25]  timeout_ms          (expect only; 0 = firmware default)
+```
+
+Rules the transport must enforce before writing:
+
+- the whole packet fits one write (244 bytes);
+- all steps target the same bus;
+- the sum of response `timeout_ms` and all `post_delay_ms` is at most 30 000 ms.
+
+The firmware validates the whole batch before transmitting anything, so a
+rejected batch (`0xE1`, `0xE2`, `0xE7`, `0xE8`, `0xEA`) never partially
+executes. The app-side wait for the result should be the batch budget plus a
+margin for BLE latency (the Nexus transport uses 2.5 s).
+
+A batch is answered by exactly one notification with response flag `0x08`
+(fragmented as needed). `status` is `0x00` when every executed step succeeded,
+otherwise the status of the first failing step; `response_can_id` is `0`. The
+payload lists the executed steps:
+
+```text
+payload[0]   step_count
+payload[1]   executed_count
+payload[2..] entries:
+  [0]     step_index
+  [1]     status
+  [2]     response_flags (0x01 = response CAN ID extended)
+  [3..6]  response_can_id (0 for request-only steps)
+  [7..8]  payload_len (LE)
+  [9..]   payload
+```
+
+Steps beyond `executed_count` were skipped after a failure. Firmware without
+v4 support parses the packet as a malformed request-only write and never
+answers; the transport treats the first silent batch of a connection as "no
+batch support" and falls back to per-step requests for the rest of the
+connection.
+
 ### Request notification
 
-Every request that expects a response, and every v3 ISO-TP request, reports
-status through `0xFEF4` notifications:
+Every request that expects a response, every v3 ISO-TP request, and every v4
+batch reports status through `0xFEF4` notifications:
 
 ```text
 [0]       seq
@@ -778,6 +885,7 @@ Response flags:
 - `0x01`: response CAN ID is extended
 - `0x02`: payload is a fragment of a larger response
 - `0x04`: more response fragments follow
+- `0x08`: payload is a v4 batch result list
 
 For fragmented notifications, the first two payload bytes are the little-endian
 fragment offset; the remaining bytes are response data. Reassemble by offset and

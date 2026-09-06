@@ -1,5 +1,17 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
-import type { CanBusConfigRequest, CanBusConfigResponse, MonitorControlRequest, MonitorControlResponse, MonitorSnapshot, VehicleRequest, VehicleTransport } from "./types.js";
+import { NoEcuResponseError } from "../errors.js";
+import type {
+  CanBusConfigRequest,
+  CanBusConfigResponse,
+  MonitorControlRequest,
+  MonitorControlResponse,
+  MonitorSnapshot,
+  VehicleBatchRequest,
+  VehicleBatchResponse,
+  VehicleBatchStepResult,
+  VehicleRequest,
+  VehicleTransport,
+} from "./types.js";
 
 type SnapshotCallback = (snapshot: MonitorSnapshot) => void;
 
@@ -8,7 +20,10 @@ const MAX_MONITOR_IDS = 16;
 export class MockTransport implements VehicleTransport {
   /** Aggregate compatibility view of monitored IDs across all buses. */
   readonly monitorCanIds = new Set<number>();
+  /** Every step sent, whether individually or as part of a batch. */
   readonly requests: VehicleRequest[] = [];
+  /** Batches received through `sendRequestBatch`, in order. */
+  readonly batches: VehicleBatchRequest[] = [];
   readonly monitorUpdates: MonitorControlRequest[] = [];
   readonly busConfigUpdates: CanBusConfigRequest[] = [];
 
@@ -61,6 +76,57 @@ export class MockTransport implements VehicleTransport {
       );
     }
     return response.slice();
+  }
+
+  /**
+   * Mirrors the device's batch semantics on top of `sendRequest`: steps run in
+   * order on one bus, a `NoEcuResponseError` maps to `no_response`, any other
+   * failure maps to `error`, and later steps are `skipped` after the first
+   * failure unless `continueOnError` is set.
+   */
+  async sendRequestBatch(req: VehicleBatchRequest): Promise<VehicleBatchResponse> {
+    this.assertConnected();
+    if (req.steps.length === 0) {
+      throw new Error("Batch request must contain at least one step");
+    }
+    const bus = normalizeBus(req.bus);
+    const mismatched = req.steps.find((step) => normalizeBus(step.txFrame.bus) !== bus);
+    if (mismatched !== undefined) {
+      throw new Error(
+        `Batch step on CAN${normalizeBus(mismatched.txFrame.bus)} does not match batch bus CAN${bus}`,
+      );
+    }
+    this.batches.push(cloneBatchRequest(req));
+
+    const results: VehicleBatchStepResult[] = [];
+    let aborted = false;
+    for (const step of req.steps) {
+      if (aborted) {
+        results.push({ status: "skipped" });
+        continue;
+      }
+      const result = await this.runBatchStep(step);
+      results.push(result);
+      if (result.status !== "ok" && req.continueOnError !== true) {
+        aborted = true;
+      }
+    }
+    return { steps: results };
+  }
+
+  private async runBatchStep(step: VehicleRequest): Promise<VehicleBatchStepResult> {
+    try {
+      const payload = await this.sendRequest(step);
+      return {
+        status: "ok",
+        ...(payload !== undefined ? { payload, responseCanId: step.responseIdStart ?? step.txFrame.canId } : {}),
+      };
+    } catch (error: unknown) {
+      if (error instanceof NoEcuResponseError) {
+        return { status: "no_response" };
+      }
+      return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   async updateMonitor(req: MonitorControlRequest): Promise<MonitorControlResponse> {
@@ -224,6 +290,18 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
         }
       : {}),
     ...(req.action !== undefined ? { action: { ...req.action } } : {}),
+  };
+}
+
+function cloneBatchRequest(req: VehicleBatchRequest): VehicleBatchRequest {
+  return {
+    ...(req.signalName !== undefined ? { signalName: req.signalName } : {}),
+    ...(req.bus !== undefined ? { bus: req.bus } : {}),
+    ...(req.continueOnError !== undefined ? { continueOnError: req.continueOnError } : {}),
+    steps: req.steps.map((step) => ({
+      ...cloneRequest(step),
+      ...(step.delayAfterMs !== undefined ? { delayAfterMs: step.delayAfterMs } : {}),
+    })),
   };
 }
 
