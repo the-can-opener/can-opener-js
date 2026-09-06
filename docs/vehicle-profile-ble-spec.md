@@ -825,11 +825,86 @@ Legacy bus 0: `[0x03, seq]`
 
 Dual-CAN: `[0x03, seq, bus]`
 
-### Stream all frames
+### Stream all frames — `0x04`
 
-Start: `[0x04, seq, bus]`
+Capture-all is a BLE monitor-data stream. It is independent of Wi-Fi Aware.
 
-Stop: `[0x05, seq, bus]`
+```text
+[0]  opcode = 0x04
+[1]  seq
+[2]  enabled: 0 or 1
+[3]  optional bus mask; bit 0 = CAN0, bit 1 = CAN1
+```
+
+When the mask is omitted, both buses are selected. A zero mask is invalid when
+enabling capture. Disabling capture may use the three-byte form. Capture data
+uses the same bus-tagged `0x81` notification format as subscribed monitor data.
+BLE disconnect disables capture-all.
+
+### Wi-Fi Aware / NAN stream — `0x05`
+
+Opcode `0x05` only starts or stops the NAN radio. It does not carry CAN frames
+over BLE.
+
+```text
+[0]  opcode = 0x05
+[1]  seq
+[2]  enabled: 0 or 1
+```
+
+This toggle is independent of BLE capture-all and subscribed monitors. The NAN
+path is read-only with respect to CAN transmission. ESP32-C5 shares one radio
+between NimBLE and Wi-Fi, so the PHY stays with BLE until this opcode enables
+NAN. BLE disconnect disables NAN.
+
+Once enabled, firmware publishes Wi-Fi Aware service `CanOpener` with SSI
+`CAN/UDP/42424/v2`. A subscriber receives CAN frames as UDP/IPv6 datagrams on
+port `42424`. Protocol version is `2`. The server queues up to 512 frames and
+packs up to 64 frames per datagram.
+
+Server HELLO (`0x90`), 8 bytes:
+
+```text
+[0]     opcode = 0x90
+[1]     proto_version
+[2..3]  queue_depth (uint16 LE)
+[4..5]  interval_ms (uint16 LE; 0 = every queued frame)
+[6]     flags
+[7]     reserved
+```
+
+HELLO flags:
+
+- `0x01`: every-frame capture
+- `0x02`: frames include extended-ID flag
+- `0x04`: frames include logical bus
+
+Server FRAMES (`0x91`):
+
+```text
+[0]      opcode = 0x91
+[1..2]   seq (uint16 LE)
+[3..4]   frame_count (uint16 LE)
+[5..8]   twai_drops (uint32 LE)
+[9..12]  stream_drops (uint32 LE)
+[13..]   frame_count * 15-byte frames
+```
+
+Each NAN frame is 15 bytes:
+
+```text
+u32 can_id
+u8  flags          bit0 set = extended 29-bit ID
+u8  dlc
+u8  data[8]
+u8  bus
+```
+
+Client commands are a single opcode byte:
+
+- `0x10` START capture
+- `0x11` STOP capture
+- `0x12` CLEAR the frame queue
 
 ### Firmware-timed periodic frame
 
@@ -893,33 +968,30 @@ Status codes:
 
 ## BLE Monitor Data
 
-Each frame payload remains 13 bytes: `u32 can_id`, `u8 dlc`, `u8 data[8]`.
+Can Opener SE emits bus-tagged 14-byte frames on opcode `0x81` for both
+subscribed snapshots and capture-all:
 
-For backward compatibility, subscribed CAN0 snapshots keep the original format:
+```text
+u32 can_id
+u8  dlc
+u8  data[8]
+u8  bus
+```
+
+Notifications on `0xA004`:
 
 ```text
 [0]     opcode = 0x81
 [1]     frame_count
-[2..]   repeated 13-byte frames
+[2..]   frame_count * 14-byte frames
 ```
 
-Bus-aware snapshots from nonzero buses use:
+Firmware batches up to 16 frames per BLE notification so the payload stays
+within the negotiated ATT MTU. Wi-Fi Aware frames do not use this characteristic.
 
-```text
-[0]     opcode = 0x82
-[1]     bus
-[2]     frame_count
-[3..]   repeated 13-byte frames
-```
-
-All-frame streaming uses:
-
-```text
-[0]     opcode = 0x83
-[1]     bus
-[2]     frame_count
-[3..]   repeated 13-byte frames
-```
+Older 13-byte `0x81` frames, plus historical `0x82` (nonzero-bus snapshot) and
+`0x83` (all-frame) envelopes, remain application-side parsing compatibility
+paths only.
 
 A transport must attach the decoded bus number to each delivered `CanFrame`.
 The virtual vehicle layer keys subscriptions by `(bus, can_id)`, so the same CAN
@@ -937,6 +1009,8 @@ profile contract onto firmware as follows:
 - v2 request layouts are sufficient for classic 0-8 byte request payloads.
 - v3 is required for variable-length ISO-TP request payloads.
 - legacy layouts may be used only for bus 0 compatibility.
+- monitor-control `0x04` starts or stops BLE capture-all; data remains on `0xA004`.
+- monitor-control `0x05` starts or stops Wi-Fi Aware/NAN; CAN frames leave over UDP, not BLE.
 
 Bitrate and physical OBD/harness routing are deliberately outside this
 application/profile protocol.
