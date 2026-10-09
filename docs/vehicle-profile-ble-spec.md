@@ -707,11 +707,16 @@ optional logical bus selector. All multibyte integers are little-endian.
 
 Can Opener SE uses:
 
-- device name: `CanOpener`
+- device name: `CanOpener SE XXXX` (in the scan response), where `XXXX` is the last two bytes of the factory MAC in uppercase hex
 - primary service: `0x0180`
 - request / response characteristic: `0xFEF4`
 - monitor control / acknowledgement: `0xA003`
 - monitor data: `0xA004`
+- security control: `0xA005`
+- Device Information Service `0x180A`, Firmware Revision String `0x2A26`
+
+`0xFEF4` and `0xA003` writes require an encrypted link and an authorized
+session; see [BLE Security and Pairing](#ble-security-and-pairing).
 
 Omitting the bus selector preserves the original single-bus behavior and routes
 to bus `0`. Dual-CAN transports should always emit the bus-aware layouts.
@@ -965,10 +970,65 @@ path is read-only with respect to CAN transmission. ESP32-C5 shares one radio
 between NimBLE and Wi-Fi, so the PHY stays with BLE until this opcode enables
 NAN. BLE disconnect disables NAN.
 
+The acknowledgement for `enabled = 1` is 37 bytes: the usual 5-byte
+[monitor configuration acknowledgement](#monitor-configuration-acknowledgement)
+followed by a fresh 32-byte AES-256 stream key. Clients that read only the
+first five bytes keep working. Disabling, or any error, returns the plain
+5-byte acknowledgement.
+
+```text
+[0]      opcode = 0x80
+[1]      seq
+[2]      status = 0x00
+[3]      0
+[4]      0
+[5..36]  stream_key[32]
+```
+
+Every enable generates a new key and drops the current NAN client. The key
+travels inside the encrypted, authorized BLE link and is never stored.
+
 Once enabled, firmware publishes Wi-Fi Aware service `CanOpener` with SSI
-`CAN/UDP/42424/v2`. A subscriber receives CAN frames as UDP/IPv6 datagrams on
-port `42424`. Protocol version is `2`. The server queues up to 512 frames and
+`CAN/UDP/42424/v3`. A subscriber receives CAN frames as UDP/IPv6 datagrams on
+port `42424`. Protocol version is `3`. The server queues up to 512 frames and
 packs up to 64 frames per datagram.
+
+#### Sealed datagrams
+
+ESP-IDF NAN datapaths are open (no NDP security), so every UDP datagram in
+both directions is sealed with AES-256-GCM using the stream key:
+
+```text
+[0]       version = 0x03
+[1..4]    counter (uint32 LE)
+[5..n-17] ciphertext of one HELLO, FRAMES or client command message
+[n-16..]  GCM tag[16]
+```
+
+- Additional authenticated data: bytes `[0..4]` (version and counter).
+- Nonce, 12 bytes: `[direction, 0, 0, 0, 0, 0, 0, 0, counter LE (4)]`.
+  `direction` is `0x01` adapter to client and `0x02` client to adapter, so
+  both sides can count from `0` under the same key without reusing a nonce.
+- Each side starts its counter at `0` after every enable and increments it per
+  datagram. Receivers reject any counter that is not strictly greater than the
+  last accepted one.
+- The adapter drops any datagram that fails authentication and only adopts a
+  sender as its stream peer after an authentic command. A client should send
+  START as its first sealed datagram.
+
+Test vector, stream key `a0a1a2…bebf` (bytes `0xa0` to `0xbf`):
+
+```text
+adapter HELLO, counter 7
+  nonce      010000000000000007000000
+  plaintext  9003000200000700
+  datagram   0307000000fdacfe29945a2ada47854b5e1044151301f9be53bdb1899e
+
+client START (0x10), counter 0
+  datagram   0300000000179213249bbdcb3e957d4687f4e12cfe67
+```
+
+The message layouts below describe the plaintext inside a sealed datagram.
 
 Server HELLO (`0x90`), 8 bytes:
 
@@ -1008,7 +1068,7 @@ u8  data[8]
 u8  bus
 ```
 
-Client commands are a single opcode byte:
+Client commands are a single opcode byte, sealed like every other datagram:
 
 - `0x10` START capture
 - `0x11` STOP capture
@@ -1104,6 +1164,181 @@ paths only.
 A transport must attach the decoded bus number to each delivered `CanFrame`.
 The virtual vehicle layer keys subscriptions by `(bus, can_id)`, so the same CAN
 ID may be monitored independently on both channels without collision.
+
+## BLE Security and Pairing
+
+Security has two layers:
+
+1. **Link encryption.** The adapter bonds with LE Secure Connections "Just
+   Works" (IO capability NoInputNoOutput, no PIN).
+   The adapter requests security as soon as a phone connects; bonded phones
+   resume encryption silently and new phones pair automatically.
+2. **Authorization.** Encryption alone does not grant access. Every connection
+   must prove possession of an access key over `0xA005` before `0xFEF4` or
+   `0xA003` accept writes or any notification is delivered.
+
+`0xFEF4`, `0xA003` and `0xA005` writes need an encrypted link. Unencrypted
+writes fail with ATT error `0x0F` (Insufficient Encryption), which makes the
+phone's OS pair. Writes to `0xFEF4` and `0xA003` on an encrypted but
+unauthorized link fail with ATT error `0x08` (Insufficient Authorization).
+No notification is sent on `0xFEF4`, `0xA003` or `0xA004` until the
+connection is authorized.
+
+A bond created on a connection that never authorizes is deleted at
+disconnect, so strangers cannot fill the bond table.
+
+### Advertising
+
+The advertising packet carries flags, service `0x0180` and 12 bytes of
+manufacturer-specific data (AD type `0xFF`):
+
+```text
+[0..1]   company_id = 0xFFFF (uint16 LE, development / unassigned)
+[2]      format_version = 0x01
+[3]      flags
+[4..11]  device_id[0..7], all zeros while unclaimed
+```
+
+Flags:
+
+- `0x01`: pairing mode is open
+- `0x02`: adapter is claimed
+
+The name `CanOpener SE XXXX` moves to the scan response. `XXXX` is the last
+two bytes of the factory MAC in uppercase hex, so the name is constant for
+that hardware. Apps match a stored credential to an advertising adapter by
+the device ID prefix in the manufacturer data. The adapter uses a static
+random address that only changes on factory reset.
+
+### Pairing mode
+
+- Opens automatically on boot while the adapter is unclaimed, and on a short
+  press of BOOT (GPIO28) while unclaimed.
+- Lasts 180 seconds and closes as soon as the adapter is claimed.
+- The status LED pulses blue. TX power drops to −12 dBm for advertising and
+  connections while it is open, so only a phone close by can claim the
+  adapter.
+- A claimed adapter never re-enters pairing mode. Holding BOOT for 5 seconds
+  factory resets it instead.
+
+### Factory reset
+
+Holding BOOT for 5 seconds erases all bonds, access keys, the device ID and
+the static random address, then restarts. The new address means phones see a
+new peripheral and do not try to reuse their old bond. The adapter boots
+unclaimed with pairing mode open.
+
+### Security control — `0xA005`
+
+`0xA005` supports Write (with response) and Notify. Each write is one request;
+the response arrives as a notification on `0xA005`, so a client subscribes
+before writing.
+
+```text
+request   [0] opcode  [1] seq  [2..] payload
+response  [0] opcode | 0x80  [1] seq  [2] status  [3..] payload
+```
+
+| Opcode | Name | Request payload | Response payload (status `0x00`) | Who |
+| --- | --- | --- | --- | --- |
+| `0x01` | CLAIM | none | `key_id`, `device_id[16]`, `key[32]` | anyone, pairing mode, unclaimed |
+| `0x02` | AUTH_BEGIN | none | `nonce[16]`, `device_id[16]` | anyone, claimed |
+| `0x03` | AUTH_PROVE | `key_id`, `hmac[32]` | `role`, `key_id` | after AUTH_BEGIN |
+| `0x10` | ADD_KEY | `role`, `label_len`, `label[label_len]` | `key_id`, `key[32]` | owner |
+| `0x11` | REVOKE_KEY | `key_id` | `key_id` | owner |
+| `0x12` | LIST_KEYS | none | `count`, then `count` × {`key_id`, `role`, `label_len`, `label`} | owner |
+
+Status codes:
+
+- `0x00`: OK
+- `0x01`: bad length or malformed payload
+- `0x02`: unknown opcode
+- `0x03`: not in pairing mode
+- `0x04`: already claimed
+- `0x05`: not authorized (no session, no challenge, or not an owner)
+- `0x06`: bad proof
+- `0x07`: all key slots in use
+- `0x08`: unknown key ID
+- `0x09`: internal error
+
+Roles: `0x01` owner, `0x02` guest. Owners can manage keys; guests can only
+use the vehicle interface.
+
+The adapter holds 8 key slots. Slot `0` is the owner key created by CLAIM and
+cannot be revoked; it is only removed by factory reset. Labels are at most
+16 bytes of UTF-8. A successful CLAIM authorizes the claiming connection as
+owner and closes pairing mode.
+
+Revoking a key takes effect immediately. If the revoked key authorized the
+current connection, the adapter disconnects it.
+
+### Authentication
+
+On every connection, after encryption:
+
+1. Write AUTH_BEGIN. The adapter returns a fresh random `nonce` and its
+   `device_id`.
+2. Compute
+   `hmac = HMAC-SHA256(key, "CO-AUTH-v1" || nonce || device_id || key_id)`,
+   where `"CO-AUTH-v1"` is the 10 ASCII bytes and `key_id` is one byte.
+3. Write AUTH_PROVE with `key_id` and `hmac`.
+
+Each nonce answers exactly one AUTH_PROVE, whether it succeeds or not. After
+three failed proofs on one connection the adapter disconnects. A client should
+check that the returned `device_id` matches its stored credential before
+proving, and treat status `0x08` (unknown key) as "access revoked".
+
+Test vector:
+
+```text
+key        000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+nonce      404142434445464748494a4b4c4d4e4f
+device_id  808182838485868788898a8b8c8d8e8f
+key_id     01
+message    434f2d415554482d7631 404142434445464748494a4b4c4d4e4f
+           808182838485868788898a8b8c8d8e8f 01
+hmac       ce22df0e9eea9d5c5b5bf01715da7987becb91e93f76198d9a85c12f7555abfb
+```
+
+### Credentials, backup and invites
+
+A credential is `{device_id, key_id, role, key}`. The owner key returned by
+CLAIM is the backup key: anyone holding it has full owner access, so apps
+should let the owner copy or export it and keep it in secure storage.
+
+Credentials have two text forms. Invites are links, so the recipient can tap
+them, with `device_id` and `key` in unpadded base64url and `key_id` and `role`
+in decimal:
+
+```text
+canopenerapp://invite?d=<device_id>&k=<key_id>&r=<role>&s=<key>
+```
+
+Backup keys are meant to be stored rather than opened, so apps show them as a
+plain code: `CO1-` followed by a 50-byte payload in Crockford base32
+(`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no padding), in dash-separated groups of
+five characters:
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 16 | `device_id` |
+| 16 | 1 | `role << 4 \| key_id` |
+| 17 | 32 | `key` |
+| 49 | 1 | first byte of SHA-256 over bytes 0-48 |
+
+Decoders ignore case, whitespace and dashes, read `O` as `0` and `I`/`L` as
+`1`, and reject codes whose check byte does not match. Apps should accept
+either form wherever a credential is imported. Test vector, for the
+credential with `device_id` `80 81 ... 8f`, `key_id` 0, role owner and `key`
+`00 01 ... 1f`:
+
+```text
+CO1-G20R5-0W4GP-38F24-9HA5R-S3CEH-W8000-820C2-0A1G7-104GM-2RC1M-70Y40-H289H-858P2-WC1J6-GV3GE-HW7R6
+```
+
+To share access, an owner issues ADD_KEY (normally role guest) and sends the
+resulting link. The recipient's app stores the credential and authenticates
+with it; the recipient's phone pairs automatically on its first connection.
 
 ## Transport Mapping Rules
 
