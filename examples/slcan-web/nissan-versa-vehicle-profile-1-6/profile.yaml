@@ -1,0 +1,173 @@
+version: 1
+profile_version: 1.0.0
+name: Nissan Versa Vehicle Profile
+
+applies_to:
+  manufacturers: [Nissan]
+  models: [Versa]
+  years:
+    - range: [2007, 2012]
+
+dbc:
+  files:
+    - path: signals.dbc
+
+endpoints:
+  body:
+    request_id: 0x745
+    response_id: 0x765
+    timeout_ms: 300
+  body_status:
+    request_id: 0x60D
+
+sequences:
+  body_session_prep:
+    steps:
+      - send: [0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00]
+        expect: [0x50, 0x81]
+      - send: [0x02, 0x10, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00]
+        expect: [0x50, 0xC0]
+
+signals:
+  SPEED:
+    monitor:
+      message: SPEED_BRAKE
+      signal: SPEED_KMPH
+  RPM:
+    monitor:
+      message: ENGINE_3
+      signal: RPM_ENGINE_3
+
+  TPS:
+    monitor:
+      message: ENGINE_4
+      signal: TPS
+
+  STEERING_ANGLE:
+    monitor:
+      message: STEERING
+      signal: STEERING_ANGLE
+
+  BRAKE_LIGHTS:
+    monitor:
+      message: SPEED_BRAKE
+      signal: BRAKE_LIGHTS
+
+  LOW_BEAMS:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: LOW_BEAMS
+
+  HIGH_BEAMS:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: HIGH_BEAMS
+
+  LEFT_SIGNAL:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: LEFT_SIGNAL
+
+  RIGHT_SIGNAL:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: RIGHT_SIGNAL
+
+  FRONT_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_LEFT_DOOR_OPEN
+
+  FRONT_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: FRONT_RIGHT_DOOR_OPEN
+
+  REAR_LEFT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_LEFT_DOOR_OPEN
+
+  REAR_RIGHT_DOOR_OPEN:
+    monitor:
+      message: LIGHTS_STATUS_60D
+      signal: REAR_RIGHT_DOOR_OPEN
+
+actions:
+  ECU_WAKE:
+    endpoint: body_status
+    steps:
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+  HORN:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x30, 0x01]
+
+  HIGH_BEAM:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x3B, 0x00, 0x02, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x3B, "*"]
+
+  RUNNING_LIGHTS:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x3A, 0x00, 0x01, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x3A, 0x01]
+
+  LOW_BEAM:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x3B, 0x00, 0x01, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x3B, 0x01]
+
+  LEFT_SIGNAL:
+    # holds position for 5 seconds or until signal off is sent which ever comes first
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x2F, 0x00, 0x02, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x2F, "*"]
+
+  RIGHT_SIGNAL:
+    # holds position for 5 seconds or until signal off is sent which ever comes first
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x2F, 0x00, 0x01, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x2F, "*"]
+
+  SIGNAL_OFF:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x2F, 0x00, 0x00, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x2F, "*"]
+
+  LOCK:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x38, "*"]
+
+  UNLOCK:
+    endpoint: body
+    steps:
+      - ref: sequences.body_session_prep
+      - send: [0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00]
+        expect: [0x70, 0x38, "*"]
+
+  WIPERS:
+    send:
+      request_id: 0x35D
+      request: [0xC1, 0x03, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00]

@@ -267,8 +267,21 @@ The core transport is intentionally dumb:
 - it receives monitor snapshots containing the latest raw CAN frames;
 - it does not parse DBC, ISO-TP, UDS, or app-level signal names.
 
-`MockTransport` ships with the library for tests and local simulations. Real BLE
-transports can implement `VehicleTransport` by mapping these methods onto the
+`MockTransport` ships with the library for tests and local simulations.
+`SlcanTransport` speaks Lawicel SLCAN over a byte port, including ISO-TP
+reassembly for `sendRequest()`. A browser opens that port with Web Serial:
+
+```ts
+import { SlcanTransport, openWebSerialSlcanPort, requestWebSerialPort } from "can-opener-js/transport";
+
+const port = await requestWebSerialPort();
+const transport = new SlcanTransport(await openWebSerialSlcanPort(port), { bitrate: 500_000 });
+```
+
+`examples/slcan-web` is a small page that connects a CANable and runs the Nissan
+Versa profile through this transport. `npm run dev:slcan` starts it.
+
+Real BLE transports can implement `VehicleTransport` by mapping these methods onto the
 firmware characteristics:
 
 - `sendRequest()` maps to the Request characteristic. Actions use

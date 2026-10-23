@@ -25,7 +25,8 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev:slcan": "npm --prefix examples/slcan-web run dev"
   },
   "keywords": [
     "can",
