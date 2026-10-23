@@ -127,19 +127,7 @@ Bits `5` through `7` are reserved.
 
 ## 6. Classic request-only packets
 
-Legacy bus 0 packet:
-
-```text
-[0]       sequence
-[1]       flags
-[2..5]    transmit_can_id:u32
-[6]       dlc, 0 through 8
-[7..14]   data[8]
-```
-
-Total length is 15 bytes.
-
-Bus-aware v2 packet:
+The v2 packet explicitly selects a logical CAN bus:
 
 ```text
 [0]       sequence
@@ -156,26 +144,9 @@ A normal request-only packet produces no notification. This includes failures
 such as an unavailable bus, invalid DLC, invalid CAN ID, and transmit failure.
 Use a response request or a batch when the app needs a transport result.
 
-New clients should use the v2 form, including for bus 0.
-
 ## 7. Classic request and response packets
 
-Legacy bus 0 packet:
-
-```text
-[0]       sequence
-[1]       flags, bit 0 set
-[2..5]    transmit_can_id:u32
-[6..9]    response_id_start:u32
-[10..13]  response_id_end:u32
-[14..15]  timeout_ms:u16
-[16]      dlc, 0 through 8
-[17..24]  data[8]
-```
-
-Total length is 25 bytes.
-
-Bus-aware v2 packet:
+The v2 packet explicitly selects a logical CAN bus:
 
 ```text
 [0]       sequence
@@ -367,11 +338,10 @@ Each executed entry:
 
 Steps after `executed_step_count` were skipped.
 
-Firmware versions without v4 may reject the shape as an older request or may
-remain silent. A transport can probe with its first batch, then fall back to
-sequential v2 writes after an unsupported response or a short capability
-timeout. Do not retry a batch after an ambiguous link timeout unless repeating
-its actions is safe.
+A transport can probe with its first batch, then fall back to sequential v2
+writes after an unsupported response or a short capability timeout. Do not
+retry a batch after an ambiguous link timeout unless repeating its actions is
+safe.
 
 ## 10. Request notifications
 
@@ -447,17 +417,6 @@ returns an acknowledgement notification on `0xA003`.
 
 ### 11.1 Add and remove IDs
 
-Legacy bus 0:
-
-```text
-[0]       opcode, 0x01 add or 0x02 remove
-[1]       sequence
-[2]       count
-[3..]     count times can_id:u32
-```
-
-Bus-aware:
-
 ```text
 [0]       opcode, 0x01 add or 0x02 remove
 [1]       sequence
@@ -466,17 +425,7 @@ Bus-aware:
 [4..]     count times can_id:u32
 ```
 
-Use the bus-aware form in new clients.
-
 ### 11.2 Clear one bus
-
-Legacy bus 0:
-
-```text
-03 sequence
-```
-
-Bus-aware:
 
 ```text
 03 sequence bus
@@ -628,10 +577,6 @@ The envelope is used for subscribed snapshots and capture-all data. A
 subscribed snapshot contains the latest value observed for each subscribed
 ID, not every frame occurrence. Capture-all contains received frames.
 
-Older clients may encounter historical 13-byte frames without a bus byte.
-Treat them as bus 0. Historical `0x82` and `0x83` envelopes are parser
-compatibility formats only; current firmware emits `0x81`.
-
 Monitor data does not carry an explicit extended-ID flag. IDs above `0x7FF`
 are necessarily extended. Avoid depending on an extended frame whose numeric
 ID is `0x7FF` or less.
@@ -764,16 +709,15 @@ Disconnect or a new enable invalidates the prior stream key and peer.
 There is no protocol negotiation request. Clients infer support from packet
 shapes and outcomes:
 
-- legacy packets support single-bus firmware
 - v2 packets select a bus explicitly
 - v3 carries an ISO-TP application payload
 - v4 carries classic CAN batches
 - monitor opcode `0x04` enables BLE capture-all
 - monitor opcode `0x05` enables Wi-Fi Aware
 - monitor opcode `0x08` configures timing
-- firmware `v0.2.0` and later requires `0xA005` authorization
+- security authorization uses `0xA005`
 
-New clients should implement:
+Clients should implement:
 
 - security authorization
 - v2 request packets

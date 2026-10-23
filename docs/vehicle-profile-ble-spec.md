@@ -31,6 +31,13 @@ Use this document for:
 - Wi-Fi Aware streaming
 - mapping the firmware protocol to `VehicleTransport`
 
+## Legacy BLE compatibility
+
+[Can Opener SE Legacy BLE Formats](./can-opener-se-legacy-ble-protocol.md)
+
+Use this document only when supporting single-bus clients or firmware from
+before the bus-aware protocol.
+
 ## Access control
 
 [Can Opener SE Security Protocol](./can-opener-se-security-protocol.md)
