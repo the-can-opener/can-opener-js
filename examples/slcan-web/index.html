@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nissan Versa SLCAN</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Nissan Versa</h1>
+        <p>2007–2012 profile over a CANable SLCAN adapter. Chrome or Edge.</p>
+      </header>
+      <section class="panel" id="link">
+        <label>
+          CAN bitrate
+          <select id="bitrate">
+            <option value="125000">125 kbit/s</option>
+            <option value="250000">250 kbit/s</option>
+            <option value="500000" selected>500 kbit/s</option>
+            <option value="1000000">1 Mbit/s</option>
+          </select>
+        </label>
+        <button id="connect" type="button">Connect</button>
+        <button id="disconnect" type="button" disabled>Disconnect</button>
+        <span id="status">Not connected</span>
+      </section>
+      <section class="panel">
+        <h2>Signals</h2>
+        <dl id="signals"></dl>
+        <h2>Actions</h2>
+        <div class="row" id="actions"></div>
+      </section>
+      <section class="panel">
+        <h2>Raw frame</h2>
+        <form id="raw">
+          <label>
+            CAN ID
+            <input id="can-id" value="745" spellcheck="false" />
+          </label>
+          <label>
+            Data hex
+            <input id="can-data" value="02 10 81 00 00 00 00 00" spellcheck="false" />
+          </label>
+          <label class="check">
+            <input id="expect-response" type="checkbox" />
+            Wait for 765
+          </label>
+          <button id="send" type="submit" disabled>Send</button>
+        </form>
+        <form id="watch">
+          <label>
+            Watch CAN ID
+            <input id="watch-id" value="60D" spellcheck="false" />
+          </label>
+          <button id="watch-button" type="submit" disabled>Watch</button>
+        </form>
+      </section>
+      <section class="panel log-panel">
+        <h2>Trace</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
