@@ -1176,7 +1176,8 @@ Security has two layers:
 
 1. **Link encryption.** The adapter bonds with LE Secure Connections "Just
    Works" (IO capability NoInputNoOutput, no PIN). Bonded phones resume
-   encryption silently and new phones pair automatically.
+   encryption silently. On a claimed adapter, a phone without a bond is
+   asked to pair only after it proves a key.
 2. **Authorization.** Encryption alone does not grant access. Every
    connection must sign a fresh challenge over `0xA005` with an Ed25519 key
    the adapter knows. The adapter stores only public keys; private keys stay
@@ -1189,18 +1190,22 @@ phone can hold a BLE link and use `0xA005`, but nothing else.
 
 A transport for Can Opener SE must, on every connection:
 
-1. Subscribe to `0xA005` notifications.
-2. Authorize over `0xA005` before using `0xFEF4` or `0xA003`. The first
+1. Negotiate an ATT MTU of at least 70 and support long writes (prepare and
+   execute); redeeming an invite sends about 330 bytes.
+2. Subscribe to `0xA005` notifications.
+3. Authorize over `0xA005` before using `0xFEF4` or `0xA003`. The first
    encrypted write may trigger the phone's OS pairing prompt, so request
    timeouts should start once the write is acknowledged.
-3. Only then subscribe to `0xFEF4`, `0xA003` and `0xA004`.
+4. Only then subscribe to `0xFEF4`, `0xA003` and `0xA004`.
 
 `0xFEF4`, `0xA003` and `0xA005` writes on an unencrypted link fail with ATT
-error `0x0F` (Insufficient Encryption), which makes the phone's OS pair.
-`0xFEF4` and `0xA003` writes before authorization fail with ATT error `0x08`
-(Insufficient Authorization), and no `0xFEF4`, `0xA003` or `0xA004`
-notification is sent. An unauthorized connection is disconnected after 60
-seconds, and a bond created on a connection that never authorizes is deleted.
+error `0x0F` (Insufficient Encryption), which makes the phone's OS pair. A
+phone that must prove its key first can use only the authentication requests
+on `0xA005` until it has. `0xFEF4` and `0xA003` writes before authorization
+fail with ATT error `0x08` (Insufficient Authorization), and no `0xFEF4`,
+`0xA003` or `0xA004` notification is sent. An unauthorized connection is
+disconnected after 60 seconds (15 seconds for a phone that must prove first),
+and a bond created on a connection that never authorizes is deleted.
 
 ### Advertising
 
@@ -1252,7 +1257,7 @@ default.
   required".
 
 Builders set it at firmware build time with `CONFIG_CO_PROVISIONING_KEY`
-(`idf.py menuconfig` → Can Opener SE). The adapter stores only its SHA-256,
+(`idf.py menuconfig` → Can Opener security). The adapter stores only its SHA-256,
 and factory reset keeps it.
 
 ### Sharing access
@@ -1266,7 +1271,9 @@ cannot invite or remove anyone.
   connection; reusing it on another phone fails.
 - The Admin can list guests, remove a guest, and cancel an invite that has
   not been used. A guest can remove its own access.
-- The number of guests is set with `CONFIG_CO_MAX_GUESTS` (default 1).
+- The number of guests is set with `CONFIG_CO_MAX_GUESTS` (default 1, at
+  most 7), in the same menu. An invite opened while every slot is taken stays
+  valid until a slot frees up.
 
 The Admin's app can export its private key as a backup. Restoring that backup
 on a new phone gives it Admin access, and the adapter replaces the old phone's
