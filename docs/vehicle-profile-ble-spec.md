@@ -1167,25 +1167,40 @@ ID may be monitored independently on both channels without collision.
 
 ## BLE Security and Pairing
 
+This section covers what a client and an adapter builder need to configure
+and use adapter security. The byte-level `0xA005` protocol (opcodes, status
+codes, signatures, invite format and test vectors) is specified in
+`SECURITY_PROTOCOL.md` in the Can Opener SE firmware repository.
+
 Security has two layers:
 
 1. **Link encryption.** The adapter bonds with LE Secure Connections "Just
-   Works" (IO capability NoInputNoOutput, no PIN).
-   The adapter requests security as soon as a phone connects; bonded phones
-   resume encryption silently and new phones pair automatically.
-2. **Authorization.** Encryption alone does not grant access. Every connection
-   must prove possession of an access key over `0xA005` before `0xFEF4` or
-   `0xA003` accept writes or any notification is delivered.
+   Works" (IO capability NoInputNoOutput, no PIN). Bonded phones resume
+   encryption silently and new phones pair automatically.
+2. **Authorization.** Encryption alone does not grant access. Every
+   connection must sign a fresh challenge over `0xA005` with an Ed25519 key
+   the adapter knows. The adapter stores only public keys; private keys stay
+   on the phone.
 
-`0xFEF4`, `0xA003` and `0xA005` writes need an encrypted link. Unencrypted
-writes fail with ATT error `0x0F` (Insufficient Encryption), which makes the
-phone's OS pair. Writes to `0xFEF4` and `0xA003` on an encrypted but
-unauthorized link fail with ATT error `0x08` (Insufficient Authorization).
-No notification is sent on `0xFEF4`, `0xA003` or `0xA004` until the
-connection is authorized.
+Connecting is not authorization, and neither is pairing. An unauthorized
+phone can hold a BLE link and use `0xA005`, but nothing else.
 
-A bond created on a connection that never authorizes is deleted at
-disconnect, so strangers cannot fill the bond table.
+### Client requirements
+
+A transport for Can Opener SE must, on every connection:
+
+1. Subscribe to `0xA005` notifications.
+2. Authorize over `0xA005` before using `0xFEF4` or `0xA003`. The first
+   encrypted write may trigger the phone's OS pairing prompt, so request
+   timeouts should start once the write is acknowledged.
+3. Only then subscribe to `0xFEF4`, `0xA003` and `0xA004`.
+
+`0xFEF4`, `0xA003` and `0xA005` writes on an unencrypted link fail with ATT
+error `0x0F` (Insufficient Encryption), which makes the phone's OS pair.
+`0xFEF4` and `0xA003` writes before authorization fail with ATT error `0x08`
+(Insufficient Authorization), and no `0xFEF4`, `0xA003` or `0xA004`
+notification is sent. An unauthorized connection is disconnected after 60
+seconds, and a bond created on a connection that never authorizes is deleted.
 
 ### Advertising
 
@@ -1204,141 +1219,65 @@ Flags:
 - `0x01`: pairing mode is open
 - `0x02`: adapter is claimed
 
-The name `CanOpener SE XXXX` moves to the scan response. `XXXX` is the last
-two bytes of the factory MAC in uppercase hex, so the name is constant for
-that hardware. Apps match a stored credential to an advertising adapter by
-the device ID prefix in the manufacturer data. The adapter uses a static
-random address that only changes on factory reset.
+The name `CanOpener SE XXXX` is in the scan response. `XXXX` is the last two
+bytes of the factory MAC in uppercase hex, so the name is constant for that
+hardware. Apps match a stored credential to an advertising adapter by the
+device ID prefix. The adapter uses a static random address that only changes
+on factory reset.
 
-### Pairing mode
+### Setting up an adapter
 
-- Opens automatically on boot while the adapter is unclaimed, and on a short
-  press of BOOT (GPIO28) while unclaimed.
-- Lasts 180 seconds and closes as soon as the adapter is claimed.
-- The status LED pulses blue. TX power drops to −12 dBm for advertising and
-  connections while it is open, so only a phone close by can claim the
-  adapter.
-- A claimed adapter never re-enters pairing mode. Holding BOOT for 5 seconds
-  factory resets it instead.
+An unclaimed adapter is set up by the first phone that claims it, which
+becomes its Admin.
+
+- Pairing mode opens on boot while the adapter is unclaimed, and on a short
+  press of BOOT (GPIO28) while unclaimed. It lasts 180 seconds and closes as
+  soon as the adapter is claimed.
+- While it is open the status LED pulses blue and TX power drops to −12 dBm,
+  so only a phone close by can claim the adapter.
+- The first phone to pair is held for the claim. A short BOOT press frees
+  that spot again, for example when the wrong phone connected first.
+- A claimed adapter never re-enters pairing mode.
+
+### Provisioning key
+
+An adapter may also hold a provisioning key: a secret set by the builder, for
+example printed on the adapter as a QR code. It is optional and absent by
+default.
+
+- **No provisioning key (default).** Any phone inside the pairing window can
+  claim the adapter.
+- **Provisioning key set.** The phone must also know the key to claim. Apps
+  ask for it when the adapter rejects a claim with "provisioning key
+  required".
+
+Builders set it at firmware build time with `CONFIG_CO_PROVISIONING_KEY`
+(`idf.py menuconfig` → Can Opener SE). The adapter stores only its SHA-256,
+and factory reset keeps it.
+
+### Sharing access
+
+The Admin can invite guests. A guest has full use of the vehicle interface but
+cannot invite or remove anyone.
+
+- The Admin's app creates an invite offline and shares it as a link or QR
+  code. Only the adapter it was made for can read it.
+- Each invite works once. The guest's phone redeems it on its first
+  connection; reusing it on another phone fails.
+- The Admin can list guests, remove a guest, and cancel an invite that has
+  not been used. A guest can remove its own access.
+- The number of guests is set with `CONFIG_CO_MAX_GUESTS` (default 1).
+
+The Admin's app can export its private key as a backup. Restoring that backup
+on a new phone gives it Admin access, and the adapter replaces the old phone's
+bond on first use.
 
 ### Factory reset
 
-Holding BOOT for 5 seconds erases all bonds, access keys, the device ID and
-the static random address, then restarts. The new address means phones see a
-new peripheral and do not try to reuse their old bond. The adapter boots
-unclaimed with pairing mode open.
-
-### Security control — `0xA005`
-
-`0xA005` supports Write (with response) and Notify. Each write is one request;
-the response arrives as a notification on `0xA005`, so a client subscribes
-before writing.
-
-```text
-request   [0] opcode  [1] seq  [2..] payload
-response  [0] opcode | 0x80  [1] seq  [2] status  [3..] payload
-```
-
-| Opcode | Name | Request payload | Response payload (status `0x00`) | Who |
-| --- | --- | --- | --- | --- |
-| `0x01` | CLAIM | none | `key_id`, `device_id[16]`, `key[32]` | anyone, pairing mode, unclaimed |
-| `0x02` | AUTH_BEGIN | none | `nonce[16]`, `device_id[16]` | anyone, claimed |
-| `0x03` | AUTH_PROVE | `key_id`, `hmac[32]` | `role`, `key_id` | after AUTH_BEGIN |
-| `0x10` | ADD_KEY | `role`, `label_len`, `label[label_len]` | `key_id`, `key[32]` | owner |
-| `0x11` | REVOKE_KEY | `key_id` | `key_id` | owner |
-| `0x12` | LIST_KEYS | none | `count`, then `count` × {`key_id`, `role`, `label_len`, `label`} | owner |
-
-Status codes:
-
-- `0x00`: OK
-- `0x01`: bad length or malformed payload
-- `0x02`: unknown opcode
-- `0x03`: not in pairing mode
-- `0x04`: already claimed
-- `0x05`: not authorized (no session, no challenge, or not an owner)
-- `0x06`: bad proof
-- `0x07`: all key slots in use
-- `0x08`: unknown key ID
-- `0x09`: internal error
-
-Roles: `0x01` owner, `0x02` guest. Owners can manage keys; guests can only
-use the vehicle interface.
-
-The adapter holds 8 key slots. Slot `0` is the owner key created by CLAIM and
-cannot be revoked; it is only removed by factory reset. Labels are at most
-16 bytes of UTF-8. A successful CLAIM authorizes the claiming connection as
-owner and closes pairing mode.
-
-Revoking a key takes effect immediately. If the revoked key authorized the
-current connection, the adapter disconnects it.
-
-### Authentication
-
-On every connection, after encryption:
-
-1. Write AUTH_BEGIN. The adapter returns a fresh random `nonce` and its
-   `device_id`.
-2. Compute
-   `hmac = HMAC-SHA256(key, "CO-AUTH-v1" || nonce || device_id || key_id)`,
-   where `"CO-AUTH-v1"` is the 10 ASCII bytes and `key_id` is one byte.
-3. Write AUTH_PROVE with `key_id` and `hmac`.
-
-Each nonce answers exactly one AUTH_PROVE, whether it succeeds or not. After
-three failed proofs on one connection the adapter disconnects. A client should
-check that the returned `device_id` matches its stored credential before
-proving, and treat status `0x08` (unknown key) as "access revoked".
-
-Test vector:
-
-```text
-key        000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
-nonce      404142434445464748494a4b4c4d4e4f
-device_id  808182838485868788898a8b8c8d8e8f
-key_id     01
-message    434f2d415554482d7631 404142434445464748494a4b4c4d4e4f
-           808182838485868788898a8b8c8d8e8f 01
-hmac       ce22df0e9eea9d5c5b5bf01715da7987becb91e93f76198d9a85c12f7555abfb
-```
-
-### Credentials, backup and invites
-
-A credential is `{device_id, key_id, role, key}`. The owner key returned by
-CLAIM is the backup key: anyone holding it has full owner access, so apps
-should let the owner copy or export it and keep it in secure storage.
-
-Credentials have two text forms. Invites are links, so the recipient can tap
-them, with `device_id` and `key` in unpadded base64url and `key_id` and `role`
-in decimal:
-
-```text
-canopenerapp://invite?d=<device_id>&k=<key_id>&r=<role>&s=<key>
-```
-
-Backup keys are meant to be stored rather than opened, so apps show them as a
-plain code: `CO1-` followed by a 50-byte payload in Crockford base32
-(`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no padding), in dash-separated groups of
-five characters:
-
-| Offset | Size | Field |
-| --- | --- | --- |
-| 0 | 16 | `device_id` |
-| 16 | 1 | `role << 4 \| key_id` |
-| 17 | 32 | `key` |
-| 49 | 1 | first byte of SHA-256 over bytes 0-48 |
-
-Decoders ignore case, whitespace and dashes, read `O` as `0` and `I`/`L` as
-`1`, and reject codes whose check byte does not match. Apps should accept
-either form wherever a credential is imported. Test vector, for the
-credential with `device_id` `80 81 ... 8f`, `key_id` 0, role owner and `key`
-`00 01 ... 1f`:
-
-```text
-CO1-G20R5-0W4GP-38F24-9HA5R-S3CEH-W8000-820C2-0A1G7-104GM-2RC1M-70Y40-H289H-858P2-WC1J6-GV3GE-HW7R6
-```
-
-To share access, an owner issues ADD_KEY (normally role guest) and sends the
-resulting link. The recipient's app stores the credential and authenticates
-with it; the recipient's phone pairs automatically on its first connection.
+Holding BOOT for 5 seconds erases all bonds, the Admin key, all guests and
+invites, the device ID and the static random address, then restarts. Phones
+see a new peripheral and do not reuse their old bond. The adapter boots
+unclaimed with pairing mode open. A provisioning key survives.
 
 ## Transport Mapping Rules
 
