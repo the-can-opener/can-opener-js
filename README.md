@@ -91,7 +91,7 @@ endpoints:
 queries:
   SPEED:
     endpoint: obd
-    send: [0x01, 0x0D]
+    send: [0x02, 0x01, 0x0D, 0, 0, 0, 0, 0]
     expect: [0x41, 0x0D]
     dbc_mapping:
       message: OBD_Response_7E8
@@ -100,17 +100,20 @@ queries:
 
 ```dbc
 BO_ 2024 OBD_Response_7E8: 8 ECU
- SG_ RESPONSE_SERVICE : 8|8@1+ (1,0) [0|255] "" Vector__XXX
- SG_ PID M : 16|8@1+ (1,0) [0|255] "" Vector__XXX
- SG_ SPEED m13 : 24|8@1+ (1,0) [0|255] "km/h" Vector__XXX
+ SG_ RESPONSE_SERVICE : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ PID M : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ SPEED m13 : 16|8@1+ (1,0) [0|255] "km/h" Vector__XXX
 ```
 
 Raw DBC-only loading is still supported for simple frame subscriptions and
 legacy tests. In profile-backed vehicles, executable names come from YAML
 `queries`, `actions`, and `signals` declarations.
 
-See `docs/vehicle-profile-ble-spec.md` for the full YAML profile, DBC, standard
-capability keyword, PID, and BLE packet specification.
+See the [Vehicle Profile and Library Specification](docs/vehicle-profile-spec.md)
+for YAML profiles, DBC files, capabilities, and the library contract. See the
+[BLE Transport Protocol](docs/can-opener-se-ble-protocol.md) and
+[Security Protocol](docs/can-opener-se-security-protocol.md) when implementing
+an app for current Can Opener SE firmware.
 
 DBC `VAL_` entries expose enum-like signal values as labels by default. Numeric
 signals without matching `VAL_` entries return their DBC-scaled physical values:
