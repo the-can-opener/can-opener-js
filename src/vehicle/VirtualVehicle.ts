@@ -18,9 +18,10 @@ import type {
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { ProfileLoader } from "../profile/ProfileLoader.js";
+import { mergeProfileCanBusConfigs, ProfileLoader } from "../profile/ProfileLoader.js";
 import type {
   ActionRunResult,
+  ProfileCanBusConfig,
   ProfileValueNormalization,
   VehicleProfileSource,
 } from "../profile/types.js";
@@ -28,6 +29,11 @@ import type {
   VehicleDisconnectOptions,
   VehicleTransport,
 } from "../transport/types.js";
+import {
+  configureCanBuses,
+  mergeCanBusTimingReports,
+  type CanBusTimingReport,
+} from "./canBusTiming.js";
 import type { VehicleState } from "./VehicleState.js";
 
 export interface VirtualVehicleInternals {
@@ -37,6 +43,10 @@ export interface VirtualVehicleInternals {
   actions: ActionController;
   capabilities: CapabilityRegistry;
   disposeFrames: () => void;
+  /** Bus timing declared by the loaded profiles. */
+  busConfigs: ProfileCanBusConfig[];
+  /** What the transport reported when that timing was applied. */
+  busTiming: CanBusTimingReport[];
 }
 
 interface ResolvedSubscriptionRequest {
@@ -205,10 +215,46 @@ export class VirtualVehicle {
     this.internals.actions.clearScheduled();
   }
 
+  /**
+   * Swaps the loaded profiles. Bus timing they declare is not sent until
+   * `configureBuses()` runs, so call it before sending requests that need it.
+   */
   reloadProfiles(sources: readonly VehicleProfileSource[]): void {
     const profiles = new ProfileLoader().load(sources);
+    const busConfigs = mergeProfileCanBusConfigs(profiles);
     this.internals.capabilities.load(profiles);
     this.dbc.load(profiles.flatMap((profile) => profile.dbcFiles));
+    this.internals.busConfigs = busConfigs;
+  }
+
+  /**
+   * Applies bus timing declared by the loaded profiles and returns the
+   * adapter's report for every bus configured so far. Buses whose requested
+   * timing has not changed are not sent again.
+   */
+  async configureBuses(): Promise<readonly CanBusTimingReport[]> {
+    const applied = await configureCanBuses(
+      this.transport,
+      this.internals.busConfigs,
+      this.internals.busTiming,
+    );
+    this.internals.busTiming = mergeCanBusTimingReports(
+      this.internals.busTiming,
+      applied,
+    );
+    return this.busTiming();
+  }
+
+  /**
+   * Timing the adapter reported per bus, including a bitrate it found when the
+   * profile asked for `auto`. Buses no profile configured are absent; they run
+   * on the adapter's default timing.
+   */
+  busTiming(): readonly CanBusTimingReport[] {
+    return this.internals.busTiming.map((report) => ({
+      ...report,
+      requested: { ...report.requested },
+    }));
   }
 
   handleFrame(

@@ -5,6 +5,8 @@ import {
   IsotpReassembly,
   parseSlcanFrame,
   slcanBitrateCommand,
+  slcanDataBitrateCommand,
+  type SlcanFrameFormat,
 } from "./slcanProtocol.js";
 import type {
   CanBusConfigRequest,
@@ -24,6 +26,10 @@ const textEncoder = new TextEncoder();
 const MAX_MONITOR_IDS = 16;
 const DEFAULT_BITRATE = 500_000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 1000;
+const CLASSIC_FRAME_LENGTH = 8;
+const ISOTP_FLOW_CONTROL_CTS = 0x30;
+/** A 64-byte CAN FD single frame spends two bytes on the escaped PCI. */
+const CAN_FD_SINGLE_FRAME_MAX_PAYLOAD = 62;
 
 export interface SlcanBytePort {
   write(chunk: Uint8Array): Promise<void>;
@@ -33,8 +39,15 @@ export interface SlcanBytePort {
 }
 
 export interface SlcanTransportOptions {
-  /** Classic CAN bitrate used when `connect()` opens the channel. Defaults to 500 kbit/s. */
+  /** Nominal bitrate used when `connect()` opens the channel. Defaults to 500 kbit/s. */
   bitrate?: number;
+  /**
+   * The adapter runs CANable 2 firmware, which adds CAN FD frames, the `Y2`/`Y5`
+   * data bitrates and `S9` (83.333 kbit/s). CANable 1 and other Lawicel
+   * adapters ignore those commands without an error, so this defaults to off
+   * and CAN FD requests are rejected.
+   */
+  canFd?: boolean;
   onTrace?: (direction: "tx" | "rx", text: string) => void;
 }
 
@@ -42,9 +55,11 @@ type SnapshotCallback = (snapshot: MonitorSnapshot) => void;
 type FrameWaiter = (frame: CanFrame | undefined) => void;
 
 /**
- * One CAN channel over a Lawicel SLCAN serial link (CANable stock firmware).
- * `sendRequest()` returns the ISO-TP application payload with PCI bytes removed.
- * Monitor filtering happens in this class; the adapter still receives every frame.
+ * One CAN channel over a Lawicel SLCAN serial link (CANable 1 or CANable 2
+ * firmware). `sendRequest()` returns the ISO-TP application payload with PCI
+ * bytes removed. Monitor filtering happens in this class; the adapter still
+ * receives every frame. The firmware never acknowledges commands, so
+ * `configureBus` reports the timing it sent, not timing the adapter confirmed.
  */
 export class SlcanTransport implements VehicleTransport {
   private readonly callbacks = new Set<SnapshotCallback>();
@@ -56,6 +71,9 @@ export class SlcanTransport implements VehicleTransport {
   private channelOpen = false;
   private reading = false;
   private bitrate: number;
+  /** Distinct CAN FD data-phase bitrate; when set, CAN FD frames switch bit rate. */
+  private dataBitrate: number | undefined;
+  private readonly canFd: boolean;
   private snapshotSequence = 0;
   private readBuffer = "";
   private readLoopPromise: Promise<void> | undefined;
@@ -68,13 +86,14 @@ export class SlcanTransport implements VehicleTransport {
     private readonly options: SlcanTransportOptions = {},
   ) {
     this.bitrate = options.bitrate ?? DEFAULT_BITRATE;
+    this.canFd = options.canFd === true;
   }
 
   async connect(): Promise<void> {
     if (this.connected) {
       return;
     }
-    if (slcanBitrateCommand(this.bitrate) === undefined) {
+    if (slcanBitrateCommand(this.bitrate, this.canFd) === undefined) {
       throw new Error(`SLCAN bitrate ${this.bitrate} is not a supported speed code`);
     }
 
@@ -82,7 +101,7 @@ export class SlcanTransport implements VehicleTransport {
     this.reading = true;
     this.readLoopPromise = this.readLoop();
     try {
-      await this.openChannel(this.bitrate);
+      await this.openChannel(this.bitrate, undefined);
     } catch (error: unknown) {
       await this.disconnect();
       throw error;
@@ -95,14 +114,22 @@ export class SlcanTransport implements VehicleTransport {
       return { status: "invalid_bus", bus: req.bus };
     }
     if (req.bitrate === "auto") {
-      return { status: "auto_detect_failed", bus: req.bus };
+      // SLCAN has no bitrate search; the channel keeps its current timing.
+      return { status: "auto_detect_failed", bus: req.bus, ...this.appliedTiming() };
     }
-    if (req.dataBitrate !== undefined || slcanBitrateCommand(req.bitrate) === undefined) {
+    if (req.dataBitrate !== undefined && !this.canFd) {
+      return { status: "invalid_bitrate", bus: req.bus };
+    }
+    const dataBitrate = distinctDataBitrate(req.bitrate, req.dataBitrate);
+    if (
+      slcanBitrateCommand(req.bitrate, this.canFd) === undefined ||
+      (dataBitrate !== undefined && slcanDataBitrateCommand(dataBitrate) === undefined)
+    ) {
       return { status: "invalid_bitrate", bus: req.bus };
     }
 
-    await this.openChannel(req.bitrate);
-    return { status: "ok", bus: req.bus, bitrate: req.bitrate };
+    await this.openChannel(req.bitrate, dataBitrate);
+    return { status: "ok", bus: req.bus, ...this.appliedTiming() };
   }
 
   async disconnect(_options?: VehicleDisconnectOptions): Promise<void> {
@@ -221,9 +248,11 @@ export class SlcanTransport implements VehicleTransport {
     if (!isSupportedBus(bus)) {
       throw new Error(`SLCAN transport only has CAN0, received CAN${bus}`);
     }
+    const format = this.requestFormat(req);
+    const txFrame = requestFrame(req);
 
     if (!req.expectCanResponse) {
-      await this.writeText(encodeSlcanDataFrame(req.txFrame));
+      await this.writeText(encodeSlcanDataFrame(txFrame, format));
       return undefined;
     }
 
@@ -240,15 +269,21 @@ export class SlcanTransport implements VehicleTransport {
     this.queuedFrames.length = 0;
     this.acceptingFrames = true;
     try {
-      await this.writeText(encodeSlcanDataFrame(req.txFrame));
-      return await this.collectResponse(reassembly, deadline);
+      await this.writeText(encodeSlcanDataFrame(txFrame, format));
+      return await this.collectResponse(reassembly, deadline, format, req.canFd?.txDl ?? CLASSIC_FRAME_LENGTH);
     } finally {
       this.acceptingFrames = false;
       this.queuedFrames.length = 0;
     }
   }
 
-  private async collectResponse(reassembly: IsotpReassembly, deadline: number): Promise<CanPayload> {
+  /** Flow control uses the request's frame shape, as Can Opener firmware does. */
+  private async collectResponse(
+    reassembly: IsotpReassembly,
+    deadline: number,
+    format: SlcanFrameFormat,
+    flowControlLength: number,
+  ): Promise<CanPayload> {
     for (;;) {
       const frame = await this.nextFrame(deadline);
       if (frame === undefined) {
@@ -266,29 +301,57 @@ export class SlcanTransport implements VehicleTransport {
         return step.payload;
       }
 
+      const flowControl = new Uint8Array(flowControlLength);
+      flowControl[0] = ISOTP_FLOW_CONTROL_CTS;
       await this.writeText(encodeSlcanDataFrame({
         canId: step.canId,
-        dlc: 8,
-        data: Uint8Array.of(0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+        dlc: flowControlLength,
+        data: flowControl,
         bus: 0,
         ...(step.extended ? { extended: true } : {}),
-      }));
+      }, format));
     }
   }
 
-  private async openChannel(bitrate: number): Promise<void> {
-    const command = slcanBitrateCommand(bitrate);
+  private requestFormat(req: VehicleRequest): SlcanFrameFormat {
+    if (req.canFd === undefined) {
+      return "classic";
+    }
+    if (!this.canFd) {
+      throw new Error("SLCAN adapter is not set up for CAN FD; pass canFd: true for CANable 2 firmware");
+    }
+    return this.dataBitrate !== undefined ? "fd_brs" : "fd";
+  }
+
+  /** Configuration commands only apply while the channel is closed. */
+  private async openChannel(bitrate: number, dataBitrate: number | undefined): Promise<void> {
+    const command = slcanBitrateCommand(bitrate, this.canFd);
     if (command === undefined) {
       throw new Error(`SLCAN bitrate ${bitrate} is not a supported speed code`);
+    }
+    const dataCommand = dataBitrate === undefined ? undefined : slcanDataBitrateCommand(dataBitrate);
+    if (dataBitrate !== undefined && dataCommand === undefined) {
+      throw new Error(`SLCAN data bitrate ${dataBitrate} is not a supported speed code`);
     }
     if (this.channelOpen) {
       await this.writeText("C\r");
       this.channelOpen = false;
     }
     await this.writeText(command);
+    if (dataCommand !== undefined) {
+      await this.writeText(dataCommand);
+    }
     await this.writeText("O\r");
     this.channelOpen = true;
     this.bitrate = bitrate;
+    this.dataBitrate = dataBitrate;
+  }
+
+  private appliedTiming(): { bitrate: number; dataBitrate?: number } {
+    return {
+      bitrate: this.bitrate,
+      ...(this.dataBitrate !== undefined ? { dataBitrate: this.dataBitrate } : {}),
+    };
   }
 
   private async readLoop(): Promise<void> {
@@ -462,6 +525,43 @@ export class SlcanTransport implements VehicleTransport {
 
 function isSupportedBus(bus: number): boolean {
   return bus === 0;
+}
+
+/** A data bitrate of zero or equal to nominal means the data phase does not switch rate. */
+function distinctDataBitrate(bitrate: number, dataBitrate: number | undefined): number | undefined {
+  return dataBitrate === undefined || dataBitrate === 0 || dataBitrate === bitrate ? undefined : dataBitrate;
+}
+
+/**
+ * The frame a request puts on the wire. A CAN FD request with `txDl` 64 is one
+ * escaped single frame (`00 len payload`) padded to 64 bytes; SLCAN does not
+ * send multi-frame requests.
+ */
+function requestFrame(req: VehicleRequest): CanFrame {
+  const { canFd, txFrame } = req;
+  if (canFd === undefined) {
+    return txFrame;
+  }
+  const data = new Uint8Array(canFd.txDl);
+  switch (canFd.txDl) {
+    case 8:
+      data.set(txFrame.data.subarray(0, CLASSIC_FRAME_LENGTH));
+      break;
+    case 64:
+      if (canFd.payload.length === 0 || canFd.payload.length > CAN_FD_SINGLE_FRAME_MAX_PAYLOAD) {
+        throw new Error(
+          `SLCAN sends a CAN FD request as one single frame of 1 to ${CAN_FD_SINGLE_FRAME_MAX_PAYLOAD} bytes, received ${canFd.payload.length}`,
+        );
+      }
+      data[1] = canFd.payload.length;
+      data.set(canFd.payload, 2);
+      break;
+    default: {
+      const unsupportedTxDl: never = canFd.txDl;
+      throw new Error(`Unsupported CAN FD tx_dl ${String(unsupportedTxDl)}`);
+    }
+  }
+  return { ...txFrame, dlc: canFd.txDl, data };
 }
 
 function isValidCanId(canId: number): boolean {

@@ -7,6 +7,7 @@ import type {
   LoadedVehicleProfile,
   ProfileAction,
   ProfileCanBusConfig,
+  ProfileCanFdConfig,
   ProfileByte,
   ProfileEndpoint,
   ProfileMonitorSignal,
@@ -44,6 +45,7 @@ interface RawEndpoint {
   bus?: unknown;
   extended?: unknown;
   timeout_ms?: unknown;
+  can_fd?: unknown;
 }
 
 interface RawSequence {
@@ -176,7 +178,19 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     ...(raw.bus !== undefined ? { bus: readBus(raw.bus, `endpoints.${name}.bus`) } : {}),
     ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
+    ...(raw.can_fd !== undefined ? { canFd: readCanFd(raw.can_fd, `endpoints.${name}.can_fd`) } : {}),
   };
+}
+
+function readCanFd(raw: unknown, path: string): ProfileCanFdConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+  const txDl = readNumber((raw as { tx_dl?: unknown }).tx_dl, `${path}.tx_dl`);
+  if (txDl !== 8 && txDl !== 64) {
+    throw new VirtualVehicleError(`${path}.tx_dl must be 8 or 64`);
+  }
+  return { txDl };
 }
 
 function normalizeResponseRange(raw: unknown, path: string): ResponseIdRange {

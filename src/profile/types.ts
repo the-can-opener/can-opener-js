@@ -1,4 +1,5 @@
 import type { DbcFile } from "../dbc/types.js";
+import type { CanFdTxDl } from "../transport/types.js";
 
 export type ProfileByte = number | "*";
 
@@ -24,6 +25,11 @@ export interface ResponseIdRange {
   end: number;
 }
 
+export interface ProfileCanFdConfig {
+  /** ISO-TP frame size: `8` keeps the classic PCI in an FD frame, `64` uses the 2016 escape form. */
+  txDl: CanFdTxDl;
+}
+
 export interface ProfileEndpoint {
   name: string;
   requestId: number;
@@ -32,6 +38,8 @@ export interface ProfileEndpoint {
   bus?: number;
   extended?: boolean;
   timeoutMs?: number;
+  /** Send this endpoint's requests as CAN FD. Omitted means classic CAN. */
+  canFd?: ProfileCanFdConfig;
 }
 
 export interface ExpectPattern {

@@ -281,6 +281,12 @@ const port = await requestWebSerialPort();
 const transport = new SlcanTransport(await openWebSerialSlcanPort(port), { bitrate: 500_000 });
 ```
 
+Pass `canFd: true` when the adapter runs CANable 2 firmware. The transport then
+sends CAN FD requests with that firmware's `d`/`b` commands, accepts
+`dataBitrate` 2 or 5 Mbit/s in `configureBus` (`Y2`/`Y5`, which turns on bit
+rate switching), and parses received CAN FD frames. Without it, CAN FD requests
+are rejected, because CANable 1 firmware ignores those commands silently.
+
 `examples/slcan-web` is a small page that connects a CANable and runs the Nissan
 Versa profile through this transport. `npm run dev:slcan` starts it.
 

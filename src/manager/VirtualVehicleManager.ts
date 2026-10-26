@@ -9,6 +9,7 @@ import { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { mergeProfileCanBusConfigs, ProfileLoader } from "../profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../profile/types.js";
 import type { VehicleDisconnectOptions, VehicleTransport } from "../transport/types.js";
+import { configureCanBuses, type CanBusTimingReport } from "../vehicle/canBusTiming.js";
 import { VehicleState } from "../vehicle/VehicleState.js";
 import { VirtualVehicle } from "../vehicle/VirtualVehicle.js";
 
@@ -45,16 +46,9 @@ export class VirtualVehicleManager {
 
     const busConfigs = mergeProfileCanBusConfigs(profiles);
     await options.transport.connect();
+    let busTiming: CanBusTimingReport[];
     try {
-      if (busConfigs.length > 0 && options.transport.configureBus === undefined) {
-        throw new VehicleConnectionError("Vehicle profile declares CAN bus timing but transport cannot configure it");
-      }
-      for (const config of busConfigs) {
-        const response = await options.transport.configureBus?.(config);
-        if (response !== undefined && response.status !== "ok") {
-          throw new VehicleConnectionError(`Failed to configure CAN bus ${config.bus}: ${response.status}`);
-        }
-      }
+      busTiming = await configureCanBuses(options.transport, busConfigs);
     } catch (error: unknown) {
       await options.transport.disconnect();
       throw error;
@@ -73,6 +67,8 @@ export class VirtualVehicleManager {
       actions,
       capabilities,
       disposeFrames,
+      busConfigs,
+      busTiming,
     });
 
     this.vehicles.set(options.id, vehicle);

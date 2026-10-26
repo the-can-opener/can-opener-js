@@ -1,12 +1,17 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
+import type { VehicleCanFdRequest } from "../transport/types.js";
 import type { ExpectPattern, ProfileEndpoint, RequestStep } from "./types.js";
 
-export function buildRequestFrame(endpoint: Pick<ProfileEndpoint, "requestId" | "extended" | "bus">, payload: Uint8Array): CanFrame {
+export function buildRequestFrame(
+  endpoint: Pick<ProfileEndpoint, "requestId" | "extended" | "bus" | "canFd">,
+  payload: Uint8Array,
+): CanFrame {
   const data = new Uint8Array(8);
   data.set(payload.slice(0, 8));
   return {
     canId: endpoint.requestId,
-    dlc: Math.min(payload.length, 8),
+    // A CAN FD request with tx_dl 8 is sent as exactly these eight bytes.
+    dlc: endpoint.canFd !== undefined ? 8 : Math.min(payload.length, 8),
     data,
     ...(endpoint.extended !== undefined ? { extended: endpoint.extended } : {}),
     ...(endpoint.bus !== undefined ? { bus: endpoint.bus } : {}),
@@ -28,9 +33,38 @@ export function buildStepFrame(step: RequestStep, endpoint?: ProfileEndpoint): C
         : step.bus !== undefined
           ? { bus: step.bus }
           : {}),
+      ...(endpoint?.canFd !== undefined ? { canFd: endpoint.canFd } : {}),
     },
     step.send,
   );
+}
+
+/**
+ * The `canFd` field for a request built from `frame`. Profile `send` bytes are
+ * one classic frame, so a CAN FD endpoint's request must be an ISO-TP single
+ * frame; its payload is what a transport segments when `txDl` is 64.
+ */
+export function canFdRequestFields(
+  endpoint: Pick<ProfileEndpoint, "name" | "canFd"> | undefined,
+  frame: CanFrame,
+): { canFd?: VehicleCanFdRequest } {
+  if (endpoint?.canFd === undefined) {
+    return {};
+  }
+  const pci = frame.data[0] ?? 0;
+  const length = pci & 0x0f;
+  const frameLength = frame.dlc ?? frame.data.length;
+  if ((pci & 0xf0) !== 0 || length === 0 || length > frameLength - 1) {
+    throw new Error(
+      `CAN FD endpoint ${endpoint.name} requires send bytes that start with an ISO-TP single-frame PCI byte`,
+    );
+  }
+  return {
+    canFd: {
+      txDl: endpoint.canFd.txDl,
+      payload: frame.data.slice(1, 1 + length),
+    },
+  };
 }
 
 export function responseBounds(endpoint: ProfileEndpoint): { responseIdStart?: number; responseIdEnd?: number } {

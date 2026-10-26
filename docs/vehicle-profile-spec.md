@@ -254,7 +254,30 @@ endpoints:
 ```
 
 `bitrate` is the nominal or arbitration bitrate. `auto` asks the transport to
-detect it. `data_bitrate` is an optional CAN FD data-phase rate.
+detect it. `data_bitrate` is an optional CAN FD data-phase rate. A bus that no
+profile configures stays on the adapter's default timing, 500 kbit/s on Can
+Opener SE.
+
+The library applies bus timing when the vehicle connects. After
+`reloadProfiles()`, call `configureBuses()` to apply timing the new profiles
+declare. A bus whose requested timing has not changed is not sent again, so a
+reload does not repeat an auto-detect. `busTiming()` returns what the adapter
+reported for each configured bus: the requested timing, the status, and the
+`bitrate` and `dataBitrate` in use.
+
+A failed `auto` detection, for example with the ignition off, does not fail
+the connection. The adapter keeps its previous timing, and `busTiming()`
+reports `auto_detect_failed` with that timing. Any other configuration error
+fails the connection.
+
+Auto-detect searches only the nominal bitrate. The reported `dataBitrate` is
+the profile's `data_bitrate`, not a detected value. Declare `data_bitrate` with
+`bitrate: auto` on a bus that carries CAN FD frames with bit-rate switching, so
+those frames decode while the adapter listens.
+
+Bus timing does not change frame format. A request is sent as CAN FD only when
+its endpoint declares `can_fd` (section 8.1). A 500 kbit/s bus with a
+`data_bitrate` still carries classic requests unchanged.
 
 If several loaded profiles configure the same bus, their timing values must
 match.
@@ -290,10 +313,66 @@ Supported fields:
 - `bus`: logical bus, default `0`.
 - `extended`: whether IDs are extended 29-bit IDs.
 - `timeout_ms`: response timeout.
+- `can_fd`: send this endpoint's requests as CAN FD. See section 8.1.
 
 The library currently reduces multiple response ranges to their lowest start
 and highest end when constructing a transport request. Do not use disjoint
 ranges if IDs between them must be rejected.
+
+### 8.1 CAN FD endpoints
+
+Timing belongs to the bus. The frame size belongs to the diagnostic endpoint:
+
+```yaml
+can:
+  buses:
+    0:
+      bitrate: 500000
+      data_bitrate: 2000000
+
+endpoints:
+  obd:
+    bus: 0
+    request_id: 0x7DF
+    response_ids:
+      - range: [0x7E8, 0x7EF]
+    can_fd:
+      tx_dl: 64
+```
+
+`can_fd.tx_dl` is the ISO-TP frame size and must be `8` or `64`:
+
+- `8` sends the profile's 8 `send` bytes unchanged as one CAN FD frame. The
+  classic single-frame PCI stays: `02 01 0D` is sent as
+  `02 01 0D 00 00 00 00 00`.
+- `64` sends the same application payload with the ISO 15765-2:2016 escape
+  form, padded to 64 bytes: `00 02 01 0D` followed by 60 bytes of `00`.
+
+Flow control for a multi-frame reply uses the same frame size as the request.
+Replies are reassembled by their frame length, so a CAN FD reply of 8 bytes or
+less uses the classic PCI and a longer one uses the 2016 PCI. The transport
+returns the application payload either way, so `expect` and decoders do not
+change.
+
+Profile `send` bytes stay one classic ISO-TP single frame, with the PCI byte
+first. The library removes that PCI for `tx_dl` 64, so the same `send` and
+`expect` work on both classic and CAN FD endpoints. A request whose first byte
+is not a single-frame PCI cannot use a CAN FD endpoint.
+
+The bit-rate switch bit is set only when the bus `data_bitrate` is set and
+differs from `bitrate`. Without a `data_bitrate`, a CAN FD endpoint still sends
+FD-format frames at the nominal rate. An ECU that expects bit-rate switch may
+not decode them, and the adapter will not decode a reply sent at a data rate it
+was not configured for. Declare the bus timing whenever an endpoint uses
+`can_fd`.
+
+Inline `{ request_id, request }` actions and monitored signals are always
+classic. Monitor frames carry at most 8 data bytes. A 64-byte frame on the live
+stream shows its first 8.
+
+The adapter's transceiver must be CAN FD capable. A classic transceiver faults
+the bus during the data phase. The Can Opener SE uses TCAN3414 transceivers,
+which support CAN FD.
 
 ## 9. Request bytes and ISO-TP
 
@@ -321,10 +400,25 @@ Here `0x02` is the ISO-TP single-frame length. The transport returns the
 reassembled application payload without ISO-TP PCI bytes, so `expect` begins
 with `0x41`, not the response frame's PCI byte.
 
-Payloads longer than eight CAN bytes are not expressible through the current
-profile and `VehicleRequest` API. A device protocol may support segmented
-requests, but that feature requires a future library transport contract before
-profiles can use it.
+Request payloads longer than one classic single frame (7 application bytes)
+are not expressible through the current profile and `VehicleRequest` API,
+including on CAN FD endpoints. Responses of any length up to the transport
+limit are reassembled.
+
+### 9.1 Probing CAN FD vehicles
+
+Some vehicles answer diagnostics only over CAN FD, for example GM Global B
+trucks such as the Sierra and Yukon. A scan tool can try classic first and fall
+back to CAN FD:
+
+1. Send the classic 11-bit probe, then the classic 29-bit probe.
+2. If both time out, configure bus 0 with `bitrate: 500000` and
+   `data_bitrate: 2000000`.
+3. Repeat both probes as CAN FD with `tx_dl: 8`, then with `tx_dl: 64`.
+4. Record the `tx_dl` that answered in the vehicle's profile.
+
+Some gateways accept an 8-byte FD frame. Others require 64. Confirm the result
+on a real vehicle before fixing a profile at `tx_dl: 64`.
 
 ## 10. Response matching
 
@@ -506,6 +600,21 @@ Optional capabilities:
 
 - `configureBus(req)`
 - `sendRequestBatch(req)`
+
+A request built from a CAN FD endpoint carries `VehicleRequest.canFd`:
+
+- `txDl`: `8` or `64`, copied from `can_fd.tx_dl`.
+- `payload`: the application payload of `txFrame`, without its PCI byte.
+
+`txFrame` is still the 8-byte classic single frame, so a transport can send it
+as-is for `txDl` 8. A transport that cannot send CAN FD must reject a request
+with `canFd`, as `SlcanTransport` does unless it is created with `canFd: true`
+for CANable 2 firmware. It must not fall back to classic CAN silently. A request
+without `canFd` must be sent as classic CAN.
+
+`sendRequestBatch` steps may carry `canFd`. A transport whose device batches
+only 8-byte frames sends a `txDl` 64 step outside the batch or splits the batch
+around it.
 
 Transport responsibilities:
 

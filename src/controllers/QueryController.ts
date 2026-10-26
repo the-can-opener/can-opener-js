@@ -6,6 +6,7 @@ import {
   alignExpectedPrefix,
   assertExpectedResponse,
   buildRequestFrame,
+  canFdRequestFields,
   responseBounds,
   stripExpectedPrefix,
 } from "../profile/RequestBuilder.js";
@@ -44,6 +45,7 @@ export class QueryController {
     const promise = this.transport.sendRequest({
       signalName: query.name,
       txFrame: frame,
+      ...canFdRequestFields(endpoint, frame),
       expectCanResponse: true,
       ...responseBounds(endpoint),
       ...(endpoint.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),
