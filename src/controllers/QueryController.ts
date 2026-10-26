@@ -45,7 +45,7 @@ export class QueryController {
     const promise = this.transport.sendRequest({
       signalName: query.name,
       txFrame: frame,
-      ...canFdRequestFields(endpoint, frame),
+      ...canFdRequestFields(endpoint.canFd, frame, `Endpoint ${endpoint.name}`),
       expectCanResponse: true,
       ...responseBounds(endpoint),
       ...(endpoint.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),

@@ -9,6 +9,7 @@ import type {
   VehicleBatchRequest,
   VehicleBatchResponse,
   VehicleBatchStepResult,
+  VehicleCanFdRequest,
   VehicleRequest,
   VehicleTransport,
 } from "./types.js";
@@ -290,7 +291,7 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
   return {
     ...req,
     txFrame: cloneFrame(req.txFrame),
-    ...(req.canFd !== undefined ? { canFd: { txDl: req.canFd.txDl, payload: req.canFd.payload.slice() } } : {}),
+    ...(req.canFd !== undefined ? { canFd: cloneCanFd(req.canFd) } : {}),
     ...(req.diagnostic !== undefined
       ? {
           diagnostic: {
@@ -303,6 +304,19 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
       : {}),
     ...(req.action !== undefined ? { action: { ...req.action } } : {}),
   };
+}
+
+function cloneCanFd(canFd: VehicleCanFdRequest): VehicleCanFdRequest {
+  switch (canFd.txDl) {
+    case 8:
+      return { txDl: 8 };
+    case 64:
+      return { txDl: 64, payload: canFd.payload.slice() };
+    default: {
+      const unsupported: never = canFd;
+      throw new Error(`Unsupported CAN FD request ${String(unsupported)}`);
+    }
+  }
 }
 
 function cloneBatchRequest(req: VehicleBatchRequest): VehicleBatchRequest {

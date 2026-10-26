@@ -6,7 +6,7 @@ import { DbcController, type DbcControllerOptions } from "../dbc/DbcController.j
 import type { DbcFile } from "../dbc/types.js";
 import { VehicleConnectionError } from "../errors.js";
 import { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { mergeProfileCanBusConfigs, ProfileLoader } from "../profile/ProfileLoader.js";
+import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../profile/types.js";
 import type { VehicleDisconnectOptions, VehicleTransport } from "../transport/types.js";
 import { configureCanBuses, type CanBusTimingReport } from "../vehicle/canBusTiming.js";
@@ -44,11 +44,10 @@ export class VirtualVehicleManager {
     const queryRoundRobin = new QueryRoundRobinController(queries);
     const actions = new ActionController(dbc, options.transport, capabilities);
 
-    const busConfigs = mergeProfileCanBusConfigs(profiles);
     await options.transport.connect();
     let busTiming: CanBusTimingReport[];
     try {
-      busTiming = await configureCanBuses(options.transport, busConfigs);
+      busTiming = await configureCanBuses(options.transport, capabilities.busConfigs());
     } catch (error: unknown) {
       await options.transport.disconnect();
       throw error;
@@ -67,7 +66,6 @@ export class VirtualVehicleManager {
       actions,
       capabilities,
       disposeFrames,
-      busConfigs,
       busTiming,
     });
 

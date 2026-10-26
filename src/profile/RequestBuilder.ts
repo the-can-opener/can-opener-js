@@ -1,16 +1,22 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
 import type { VehicleCanFdRequest } from "../transport/types.js";
-import type { ExpectPattern, ProfileEndpoint, RequestStep } from "./types.js";
+import type {
+  ExpectPattern,
+  ProfileCanFdConfig,
+  ProfileEndpoint,
+  RequestStep,
+  ResolvedProfileEndpoint,
+} from "./types.js";
 
 export function buildRequestFrame(
-  endpoint: Pick<ProfileEndpoint, "requestId" | "extended" | "bus" | "canFd">,
+  endpoint: Pick<ResolvedProfileEndpoint, "requestId" | "extended" | "bus" | "canFd">,
   payload: Uint8Array,
 ): CanFrame {
   const data = new Uint8Array(8);
   data.set(payload.slice(0, 8));
   return {
     canId: endpoint.requestId,
-    // A CAN FD request with tx_dl 8 is sent as exactly these eight bytes.
+    // CAN FD frames are sent with all eight bytes, zero-padded.
     dlc: endpoint.canFd !== undefined ? 8 : Math.min(payload.length, 8),
     data,
     ...(endpoint.extended !== undefined ? { extended: endpoint.extended } : {}),
@@ -18,7 +24,12 @@ export function buildRequestFrame(
   };
 }
 
-export function buildStepFrame(step: RequestStep, endpoint?: ProfileEndpoint): CanFrame {
+/** `canFd` is the endpoint's setting for endpoint-backed steps, or the inline step's resolved setting. */
+export function buildStepFrame(
+  step: RequestStep,
+  endpoint?: ResolvedProfileEndpoint,
+  canFd: ProfileCanFdConfig | undefined = endpoint?.canFd,
+): CanFrame {
   const requestId = step.requestId ?? endpoint?.requestId;
   if (requestId === undefined) {
     throw new Error("Request step does not declare a request ID");
@@ -33,38 +44,44 @@ export function buildStepFrame(step: RequestStep, endpoint?: ProfileEndpoint): C
         : step.bus !== undefined
           ? { bus: step.bus }
           : {}),
-      ...(endpoint?.canFd !== undefined ? { canFd: endpoint.canFd } : {}),
+      ...(canFd !== undefined ? { canFd } : {}),
     },
     step.send,
   );
 }
 
 /**
- * The `canFd` field for a request built from `frame`. Profile `send` bytes are
- * one classic frame, so a CAN FD endpoint's request must be an ISO-TP single
- * frame; its payload is what a transport segments when `txDl` is 64.
+ * The `canFd` field for a request built from `frame`. With `txDl` 8 the frame
+ * is sent as-is. With `txDl` 64 the transport repacks the payload, so the
+ * frame must be an ISO-TP single frame (profile `send` bytes are one frame).
  */
 export function canFdRequestFields(
-  endpoint: Pick<ProfileEndpoint, "name" | "canFd"> | undefined,
+  canFd: ProfileCanFdConfig | undefined,
   frame: CanFrame,
+  subject: string,
 ): { canFd?: VehicleCanFdRequest } {
-  if (endpoint?.canFd === undefined) {
+  if (canFd === undefined) {
     return {};
   }
-  const pci = frame.data[0] ?? 0;
-  const length = pci & 0x0f;
-  const frameLength = frame.dlc ?? frame.data.length;
-  if ((pci & 0xf0) !== 0 || length === 0 || length > frameLength - 1) {
-    throw new Error(
-      `CAN FD endpoint ${endpoint.name} requires send bytes that start with an ISO-TP single-frame PCI byte`,
-    );
+  switch (canFd.txDl) {
+    case 8:
+      return { canFd: { txDl: 8 } };
+    case 64: {
+      const pci = frame.data[0] ?? 0;
+      const length = pci & 0x0f;
+      const frameLength = frame.dlc ?? frame.data.length;
+      if ((pci & 0xf0) !== 0 || length === 0 || length > frameLength - 1) {
+        throw new Error(
+          `${subject} uses CAN FD tx_dl 64, which requires send bytes that start with an ISO-TP single-frame PCI byte`,
+        );
+      }
+      return { canFd: { txDl: 64, payload: frame.data.slice(1, 1 + length) } };
+    }
+    default: {
+      const unsupported: never = canFd.txDl;
+      throw new Error(`Unsupported CAN FD tx_dl ${String(unsupported)}`);
+    }
   }
-  return {
-    canFd: {
-      txDl: endpoint.canFd.txDl,
-      payload: frame.data.slice(1, 1 + length),
-    },
-  };
 }
 
 export function responseBounds(endpoint: ProfileEndpoint): { responseIdStart?: number; responseIdEnd?: number } {

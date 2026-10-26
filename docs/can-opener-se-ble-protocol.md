@@ -569,6 +569,10 @@ FD capability.
 Auto-detection requires three valid frames at a candidate rate. If the bus is
 asleep or no candidate matches, firmware restores the previous timing.
 
+Firmware replies only when auto-detection finishes. It listens for 250 ms per
+candidate rate, so on a silent bus the reply arrives after about 2.5 s. A
+client must wait at least that long before treating the command as timed out.
+
 Runtime timing returns to compiled defaults after BLE disconnect.
 
 ## 12. Monitor acknowledgements
@@ -805,9 +809,11 @@ A Can Opener SE `VehicleTransport` maps:
 - `VehicleRequest.txFrame.canId` to transmit CAN ID
 - `VehicleRequest.txFrame.data` and `dlc` to the raw classic CAN frame
 - response bounds and timeout to the v2 response fields
-- `VehicleRequest.canFd` with `txDl` 8 to the v2 packet with flag `0x40`
-- `VehicleRequest.canFd` with `txDl` 64 to a v3 packet with flags
-  `0x08 | 0x40`, `tx_dl` 64, and `canFd.payload` as the application payload
+- `VehicleRequest.canFd` `{ txDl: 8 }` to the v2 packet with flag `0x40`;
+  profiles produce it for endpoints with `tx_dl` 8 and for inline actions on an
+  FD bus
+- `VehicleRequest.canFd` `{ txDl: 64, payload }` to a v3 packet with flags
+  `0x08 | 0x40`, `tx_dl` 64, and `payload` as the application payload
 - `VehicleBatchRequest` to one or more v4 writes; a `txDl` 8 step sets step
   flag `0x40`, and a `txDl` 64 step cannot be batched
 - `MonitorControlRequest` to add, remove, or clear on `0xA003`

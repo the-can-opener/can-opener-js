@@ -557,8 +557,8 @@ function requestFrame(req: VehicleRequest): CanFrame {
       data.set(canFd.payload, 2);
       break;
     default: {
-      const unsupportedTxDl: never = canFd.txDl;
-      throw new Error(`Unsupported CAN FD tx_dl ${String(unsupportedTxDl)}`);
+      const unsupported: never = canFd;
+      throw new Error(`Unsupported CAN FD request ${String(unsupported)}`);
     }
   }
   return { ...txFrame, dlc: canFd.txDl, data };

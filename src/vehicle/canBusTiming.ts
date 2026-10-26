@@ -1,6 +1,7 @@
 import { VehicleConnectionError } from "../errors.js";
 import type { ProfileCanBusConfig } from "../profile/types.js";
 import type {
+  CanBusConfigRequest,
   CanBusConfigResponse,
   CanBusConfigStatus,
   VehicleTransport,
@@ -9,18 +10,21 @@ import type {
 /** What the transport reported after applying one bus's profile timing. */
 export interface CanBusTimingReport extends CanBusConfigResponse {
   /** Timing the profiles asked for; `bitrate: "auto"` means the adapter searched for it. */
-  requested: ProfileCanBusConfig;
+  requested: CanBusConfigRequest;
 }
 
 /**
  * Applies `configs` in bus order and returns one report per bus whose timing
  * was sent. A bus already reported with the same requested timing is skipped,
  * so repeated profile reloads do not repeat a listen-only auto-detect.
+ * `onApplied` sees each report as it arrives, including those before a bus
+ * that fails.
  */
 export async function configureCanBuses(
   transport: VehicleTransport,
   configs: readonly ProfileCanBusConfig[],
   previous: readonly CanBusTimingReport[] = [],
+  onApplied?: (report: CanBusTimingReport) => void,
 ): Promise<CanBusTimingReport[]> {
   const pending = configs.filter(
     (config) => !previous.some((report) => sameRequestedTiming(report, config)),
@@ -36,17 +40,20 @@ export async function configureCanBuses(
 
   const reports: CanBusTimingReport[] = [];
   for (const config of pending) {
-    const response = await transport.configureBus({
+    const requested: CanBusConfigRequest = {
       bus: config.bus,
       bitrate: config.bitrate,
       ...(config.dataBitrate !== undefined ? { dataBitrate: config.dataBitrate } : {}),
-    });
+    };
+    const response = await transport.configureBus({ ...requested });
     if (!isUsableBusTiming(config, response.status)) {
       throw new VehicleConnectionError(
         `Failed to configure CAN bus ${config.bus}: ${response.status}`,
       );
     }
-    reports.push({ ...response, requested: { ...config } });
+    const report = { ...response, requested };
+    reports.push(report);
+    onApplied?.(report);
   }
   return reports;
 }
@@ -74,8 +81,8 @@ function sameRequestedTiming(
   );
 }
 
-// A failed auto-detect leaves the adapter on its previous timing (500 kbit/s
-// by default), which is still usable; the report says detection failed.
+// A failed auto-detect leaves the adapter on its previous timing, which is
+// still usable; the report says detection failed.
 function isUsableBusTiming(
   config: ProfileCanBusConfig,
   status: CanBusConfigStatus,

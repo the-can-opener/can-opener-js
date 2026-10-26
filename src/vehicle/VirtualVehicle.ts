@@ -18,10 +18,9 @@ import type {
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { mergeProfileCanBusConfigs, ProfileLoader } from "../profile/ProfileLoader.js";
+import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type {
   ActionRunResult,
-  ProfileCanBusConfig,
   ProfileValueNormalization,
   VehicleProfileSource,
 } from "../profile/types.js";
@@ -43,9 +42,7 @@ export interface VirtualVehicleInternals {
   actions: ActionController;
   capabilities: CapabilityRegistry;
   disposeFrames: () => void;
-  /** Bus timing declared by the loaded profiles. */
-  busConfigs: ProfileCanBusConfig[];
-  /** What the transport reported when that timing was applied. */
+  /** What the transport reported when each bus's profile timing was applied. */
   busTiming: CanBusTimingReport[];
 }
 
@@ -56,6 +53,8 @@ interface ResolvedSubscriptionRequest {
 }
 
 export class VirtualVehicle {
+  private busTimingQueue: Promise<unknown> = Promise.resolve();
+
   constructor(
     readonly id: string,
     readonly state: VehicleState,
@@ -221,28 +220,21 @@ export class VirtualVehicle {
    */
   reloadProfiles(sources: readonly VehicleProfileSource[]): void {
     const profiles = new ProfileLoader().load(sources);
-    const busConfigs = mergeProfileCanBusConfigs(profiles);
     this.internals.capabilities.load(profiles);
     this.dbc.load(profiles.flatMap((profile) => profile.dbcFiles));
-    this.internals.busConfigs = busConfigs;
   }
 
   /**
    * Applies bus timing declared by the loaded profiles and returns the
    * adapter's report for every bus configured so far. Buses whose requested
-   * timing has not changed are not sent again.
+   * timing has not changed are not sent again. Calls run one at a time, so
+   * overlapping reloads never repeat an auto-detect; a bus applied before a
+   * failure keeps its report.
    */
-  async configureBuses(): Promise<readonly CanBusTimingReport[]> {
-    const applied = await configureCanBuses(
-      this.transport,
-      this.internals.busConfigs,
-      this.internals.busTiming,
-    );
-    this.internals.busTiming = mergeCanBusTimingReports(
-      this.internals.busTiming,
-      applied,
-    );
-    return this.busTiming();
+  configureBuses(): Promise<readonly CanBusTimingReport[]> {
+    const run = this.busTimingQueue.then(() => this.applyBusTiming());
+    this.busTimingQueue = run.catch(() => undefined);
+    return run;
   }
 
   /**
@@ -255,6 +247,18 @@ export class VirtualVehicle {
       ...report,
       requested: { ...report.requested },
     }));
+  }
+
+  private async applyBusTiming(): Promise<readonly CanBusTimingReport[]> {
+    await configureCanBuses(
+      this.transport,
+      this.internals.capabilities.busConfigs(),
+      this.internals.busTiming,
+      (report) => {
+        this.internals.busTiming = mergeCanBusTimingReports(this.internals.busTiming, [report]);
+      },
+    );
+    return this.busTiming();
   }
 
   handleFrame(

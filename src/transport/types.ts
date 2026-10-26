@@ -70,25 +70,26 @@ export interface VehicleDisconnectOptions {
   cancelConnection?: boolean;
 }
 
-/** ISO-TP frame size for a CAN FD diagnostic request. */
+/** ISO-TP frame size for a CAN FD request: the frame length used for segmentation and flow control. */
 export type CanFdTxDl = 8 | 64;
 
-export interface VehicleCanFdRequest {
-  /**
-   * `8` sends `txFrame` unchanged as one 8-byte CAN FD frame. `64` segments
-   * `payload` into 64-byte CAN FD frames with ISO 15765-2:2016 PCI.
-   */
-  txDl: CanFdTxDl;
-  /** ISO-TP application payload carried by `txFrame`, without its single-frame PCI byte. */
-  payload: CanPayload;
-}
+export type VehicleCanFdRequest =
+  /** Send `txFrame` unchanged as one 8-byte CAN FD frame. */
+  | { txDl: 8 }
+  | {
+    /** Send `payload` in 64-byte CAN FD frames with ISO 15765-2:2016 PCI. */
+    txDl: 64;
+    /** ISO-TP application payload carried by `txFrame`, without its single-frame PCI byte. */
+    payload: CanPayload;
+  };
 
 export interface VehicleRequest {
   signalName?: string;
   txFrame: CanFrame;
   /**
-   * Send this request as CAN FD. Omitted means classic CAN, even when the bus
-   * has a data bitrate. Flow control for the reply uses the same frame size.
+   * Send this request as CAN FD, with bit-rate switching when the bus has a
+   * data bitrate. Omitted means classic CAN. ISO-TP flow control for the
+   * reply uses the same frame size.
    */
   canFd?: VehicleCanFdRequest;
   expectCanResponse: boolean;

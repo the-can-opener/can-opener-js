@@ -279,13 +279,18 @@ export class ActionController {
       throw new Error(`Action ${action.name} step does not declare an endpoint or request_id`);
     }
     const timeoutMs = step.timeoutMs ?? endpoint?.timeoutMs;
-    const txFrame = buildStepFrame(step, endpoint);
+    const canFd = endpoint !== undefined ? endpoint.canFd : this.capabilities?.inlineStepCanFd(step, action.name);
+    const txFrame = buildStepFrame(step, endpoint, canFd);
     return {
       step,
       request: {
         signalName: action.name,
         txFrame,
-        ...canFdRequestFields(endpoint, txFrame),
+        ...canFdRequestFields(
+          canFd,
+          txFrame,
+          endpoint !== undefined ? `Endpoint ${endpoint.name}` : `Action ${action.name}`,
+        ),
         expectCanResponse: step.expect !== undefined,
         ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
         ...(endpoint?.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),

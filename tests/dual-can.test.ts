@@ -45,7 +45,7 @@ can:
       dbcFiles: [],
     };
     await expect(manager.connect({ id: "dual-conflict", transport, profiles: [dualCanProfile, conflict] }))
-      .rejects.toThrow("Conflicting CAN bus 1 timing");
+      .rejects.toThrow("Conflicting CAN bus 1 settings");
     expect(transport.isConnected()).toBe(false);
   });
 

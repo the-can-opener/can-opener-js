@@ -52,7 +52,7 @@ describe("CAN bus timing reports", () => {
     const car = await new VirtualVehicleManager().connect({ id: "reload", transport, profiles: [] });
     expect(car.busTiming()).toEqual([]);
 
-    const fdProfile = timingProfile("fd-bus", "bitrate: 500000\n      data_bitrate: 2000000");
+    const fdProfile = timingProfile("fd-bus", "bitrate: 500000\n      data_bitrate: 2000000\n      fd: true");
     car.reloadProfiles([fdProfile]);
     expect(transport.busConfigUpdates).toEqual([]);
 
@@ -69,6 +69,28 @@ describe("CAN bus timing reports", () => {
     car.reloadProfiles([fdProfile]);
     await car.configureBuses();
     expect(transport.busConfigUpdates).toEqual([{ bus: 0, bitrate: 500000, dataBitrate: 2000000 }]);
+  });
+
+  it("runs overlapping configureBuses calls one at a time so auto-detect is sent once", async () => {
+    const transport = new MockTransport();
+    transport.scriptBusConfigResponse({ status: "ok", bus: 0, bitrate: 250000, dataBitrate: 0 });
+    const car = await new VirtualVehicleManager().connect({ id: "overlap", transport, profiles: [] });
+
+    car.reloadProfiles([timingProfile("auto-bus", "bitrate: auto")]);
+    await Promise.all([car.configureBuses(), car.configureBuses()]);
+
+    expect(transport.busConfigUpdates).toEqual([{ bus: 0, bitrate: "auto" }]);
+  });
+
+  it("keeps reports for buses applied before one fails", async () => {
+    const transport = new MockTransport();
+    transport.scriptBusConfigResponse({ status: "invalid_bitrate", bus: 1, bitrate: 125000, dataBitrate: 0 });
+    const car = await new VirtualVehicleManager().connect({ id: "partial", transport, profiles: [] });
+
+    car.reloadProfiles([timingProfile("two-buses", "bitrate: 500000\n    1:\n      bitrate: 33333")]);
+
+    await expect(car.configureBuses()).rejects.toThrow("Failed to configure CAN bus 1: invalid_bitrate");
+    expect(car.busTiming()).toMatchObject([{ status: "ok", bus: 0, bitrate: 500000 }]);
   });
 
   it("keeps the last report for a bus the reloaded profiles no longer configure", async () => {

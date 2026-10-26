@@ -305,7 +305,7 @@ describe("SlcanTransport", () => {
 
     await expect(transport.sendRequest({
       txFrame: { canId: 0x7df, dlc: 8, data: Uint8Array.of(0x02, 0x01, 0x0d, 0, 0, 0, 0, 0) },
-      canFd: { txDl: 8, payload: Uint8Array.of(0x01, 0x0d) },
+      canFd: { txDl: 8 },
       expectCanResponse: false,
     })).rejects.toThrow(/canFd: true/u);
     await transport.disconnect();
@@ -323,7 +323,7 @@ describe("SlcanTransport", () => {
 
     const payload = await transport.sendRequest({
       txFrame: { canId: 0x7df, dlc: 3, data: Uint8Array.of(0x02, 0x01, 0x0d) },
-      canFd: { txDl: 8, payload: Uint8Array.of(0x01, 0x0d) },
+      canFd: { txDl: 8 },
       expectCanResponse: true,
       responseIdStart: 0x7e8,
       responseIdEnd: 0x7ef,
