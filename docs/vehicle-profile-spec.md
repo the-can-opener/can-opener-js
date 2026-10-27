@@ -253,11 +253,51 @@ endpoints:
     response_id: 0x765
 ```
 
-`bitrate` is the nominal or arbitration bitrate. `auto` asks the transport to
-detect it. `data_bitrate` is an optional CAN FD data-phase rate.
+Bus fields:
 
-If several loaded profiles configure the same bus, their timing values must
-match.
+- `bitrate`: nominal bitrate in bit/s, or `auto` to have the transport detect
+  it. Every frame, classic or FD, is arbitrated and acknowledged at this rate.
+- `data_bitrate`: CAN FD data-phase bitrate in bit/s. Only the data bytes of
+  FD frames sent with bit-rate switching use it. Omitted: the nominal rate.
+- `fd`: frames sent on this bus default to CAN FD. See section 8.1.
+
+A CAN FD bus therefore has two rates. On a typical FD bus, `bitrate: 500000`
+and `data_bitrate: 2000000` means each frame starts at 500 kbit/s so classic
+and FD nodes can arbitrate together, then switches to 2 Mbit/s for its data.
+
+`data_bitrate` is timing only; it does not make requests FD. Declare it on
+every bus that carries FD frames with bit-rate switching, even if the profile
+never sends FD. The Can Opener SE controller is always FD-capable, and without
+the right data rate it cannot decode those frames and flags them with error
+frames.
+
+A bus that no profile configures stays on the adapter's default timing. On
+Can Opener SE that is 500 kbit/s on bus 0 and 125 kbit/s on bus 1, with no data
+rate.
+
+The library applies bus timing when the vehicle connects. After
+`reloadProfiles()`, call `configureBuses()` to apply timing the new profiles
+declare. A bus whose requested timing has not changed is not sent again, so a
+reload does not repeat an auto-detect. `busTiming()` returns what the adapter
+reported for each configured bus: the requested timing, the status, and the
+`bitrate` and `dataBitrate` in use.
+
+A failed `auto` detection, for example with the ignition off, does not fail
+the connection. The adapter keeps its previous timing, and `busTiming()`
+reports `auto_detect_failed` with that timing. Any other configuration error
+fails the connection.
+
+Auto-detect searches only the nominal bitrate. The reported `dataBitrate` is
+the profile's `data_bitrate`, not a detected value. Declare `data_bitrate` with
+`bitrate: auto` on a bus that carries CAN FD frames with bit-rate switching, so
+those frames decode while the adapter listens. On a silent bus, Can Opener SE
+listens for up to about 2.5 s before it reports `auto_detect_failed`, so a
+transport must wait at least that long for the reply.
+
+If several loaded profiles configure the same bus, all of its fields must
+match. A bus may be declared by one profile and used by another: a shared
+profile can define endpoints without `can`, and a vehicle-specific profile
+loaded with it can declare the buses.
 
 The profile layer accepts bus numbers from `0` through `255`. A transport may
 support fewer buses. Can Opener SE currently supports buses `0` and `1`.
@@ -290,10 +330,101 @@ Supported fields:
 - `bus`: logical bus, default `0`.
 - `extended`: whether IDs are extended 29-bit IDs.
 - `timeout_ms`: response timeout.
+- `fd`: frame format for this endpoint's requests, overriding the bus default.
+  See section 8.1.
 
 The library currently reduces multiple response ranges to their lowest start
 and highest end when constructing a transport request. Do not use disjoint
 ranges if IDs between them must be rejected.
+
+### 8.1 CAN FD
+
+Received frames describe themselves: an FD-capable adapter receives classic
+and FD frames on the same bus, so nothing needs declaring to listen beyond
+the bus timing in section 7. Only frames the library sends need a format, and
+the bus sets the default once:
+
+```yaml
+can:
+  buses:
+    0:
+      bitrate: 500000
+      data_bitrate: 2000000
+      fd:
+        isotp:
+          tx_dl: 64
+
+endpoints:
+  obd:                  # CAN FD, tx_dl 64 from the bus
+    request_id: 0x7DF
+    response_ids:
+      - range: [0x7E8, 0x7EF]
+  bcm:                  # CAN FD, but this ECU wants 8-byte ISO-TP frames
+    request_id: 0x7A0
+    response_id: 0x7A8
+    fd: { tx_dl: 8 }
+  legacy:               # a classic-only ECU on the same bus
+    request_id: 0x7B0
+    response_id: 0x7B8
+    fd: false
+```
+
+Bus `fd` accepts `true`, `false`, or an object:
+
+- `true` or `{}`: frames sent on this bus are CAN FD; ISO-TP endpoints use
+  `tx_dl` 8.
+- `isotp.tx_dl`: the ISO-TP frame size endpoints on this bus use, `8` or `64`.
+- `false` or omitted: frames sent on this bus are classic.
+
+Endpoint `fd` overrides the bus default with `true` (FD at the bus's
+`isotp.tx_dl`), `{ tx_dl: 8 | 64 }`, or `false` (classic). Inline
+`{ request_id, request }` actions take a boolean `fd` the same way (section
+14). The library sends each request in the first format it finds:
+
+1. the endpoint's or inline action's own `fd`;
+2. the bus `fd`;
+3. classic CAN.
+
+Sending CAN FD on a bus that no loaded profile declares `fd` is a load error.
+A classic node that sees an FD frame flags it with an error frame, so the
+library never sends FD on a bus that has not been declared FD.
+
+`tx_dl` is the ISO-TP frame size. It sets how a diagnostic request is packed
+and the frame size of flow control for the reply:
+
+- `8` sends the profile's 8 `send` bytes unchanged as one CAN FD frame. The
+  classic single-frame PCI stays: `02 01 0D` is sent as
+  `02 01 0D 00 00 00 00 00`.
+- `64` sends the same application payload with the ISO 15765-2:2016 escape
+  form, padded to 64 bytes: `00 02 01 0D` followed by 60 bytes of `00`.
+
+ISO 15765-2 also allows 12 to 48. The library supports only 8 and 64.
+
+Replies are reassembled by their frame length, so a CAN FD reply of 8 bytes or
+less uses the classic PCI and a longer one uses the 2016 PCI. The transport
+returns the application payload either way, so `expect` and decoders do not
+change.
+
+Profile `send` bytes stay one classic ISO-TP single frame, with the PCI byte
+first. The library removes that PCI for `tx_dl` 64, so the same `send` and
+`expect` work on classic and FD buses. A request whose first byte is not a
+single-frame PCI cannot use `tx_dl` 64.
+
+Inline actions are raw frames, not ISO-TP, so `tx_dl` does not apply. An FD
+inline frame carries the action's bytes zero-padded to 8.
+
+The bit-rate switch bit is set only when the bus `data_bitrate` is set and
+differs from `bitrate`. Without a `data_bitrate`, FD frames are sent at the
+nominal rate throughout. An ECU that expects bit-rate switching may not decode
+them.
+
+Monitored signals decode the first 8 data bytes of a frame, classic or FD. Can
+Opener SE monitor records carry at most 8 data bytes and do not say whether a
+frame was FD, so a signal past byte 8 of an FD message cannot be monitored.
+
+The adapter's transceiver must be CAN FD capable. A classic transceiver faults
+the bus during the data phase. The Can Opener SE uses TCAN3414 transceivers,
+which support CAN FD.
 
 ## 9. Request bytes and ISO-TP
 
@@ -321,10 +452,41 @@ Here `0x02` is the ISO-TP single-frame length. The transport returns the
 reassembled application payload without ISO-TP PCI bytes, so `expect` begins
 with `0x41`, not the response frame's PCI byte.
 
-Payloads longer than eight CAN bytes are not expressible through the current
-profile and `VehicleRequest` API. A device protocol may support segmented
-requests, but that feature requires a future library transport contract before
-profiles can use it.
+Request payloads longer than one classic single frame (7 application bytes)
+are not expressible through the current profile and `VehicleRequest` API,
+including on CAN FD endpoints. Responses of any length up to the transport
+limit are reassembled.
+
+### 9.1 Probing CAN FD vehicles
+
+Some vehicles answer diagnostics only over CAN FD, for example GM Global B
+trucks such as the Sierra and Yukon. A scan tool can try classic first and fall
+back to CAN FD. Classic probes are safe on any bus, because FD nodes accept
+classic frames. FD probes are not: every classic node that sees one flags an
+error frame, and Can Opener SE retransmits a failed frame up to 3 times, so
+one FD probe on a classic bus can cause up to 4 error frames. A few error
+frames do not take nodes off the bus, but they are visible disruption and may
+set fault codes. Only escalate to FD when classic has positively failed:
+
+1. Send the classic 11-bit probe, then the classic 29-bit probe.
+2. Read how each probe failed:
+   - Transmit failure (Can Opener SE `CAN_TX_FAIL`): no node acknowledged the
+     frame. The bus is asleep or the bitrate is wrong. Wake the vehicle (the
+     `ECU_WAKE` action, or ignition on), wait for traffic, and retry classic.
+     Do not try FD.
+   - Response timeout (`NoEcuResponseError`): nodes acknowledged the frame,
+     but no ECU answered. FD may be needed.
+3. Only after both classic probes timed out on an acknowledged bus, configure
+   the bus with `data_bitrate: 2000000` and `fd: true`, then repeat the probes.
+   If they time out, try `fd: { isotp: { tx_dl: 64 } }`.
+4. Record the bus `fd` setting that answered in the vehicle's profile.
+
+Some gateways accept an 8-byte FD frame. Others require 64. Confirm the result
+on a real vehicle before fixing a profile at `tx_dl: 64`.
+
+FD traffic observed while listening would be a safer signal than a failed
+classic probe. Can Opener SE monitor records do not yet carry the FD flag, so
+a scan tool cannot detect FD traffic that way today.
 
 ## 10. Response matching
 
@@ -467,6 +629,19 @@ actions:
       request: [0x01, 0x00, 0x00, 0x00]
 ```
 
+An inline request follows its bus's `fd` default (section 8.1). Set
+`fd: false` for a frame the vehicle carries as classic on an FD bus:
+
+```yaml
+actions:
+  CHIME:
+    send:
+      bus: 0
+      request_id: 0x3F1
+      fd: false
+      request: [0x02, 0x10]
+```
+
 A multi-step action can reuse a sequence:
 
 ```yaml
@@ -506,6 +681,25 @@ Optional capabilities:
 
 - `configureBus(req)`
 - `sendRequestBatch(req)`
+
+A request the profile sends as CAN FD (section 8.1) carries
+`VehicleRequest.canFd`:
+
+- `{ txDl: 8 }`: send `txFrame` unchanged as one 8-byte CAN FD frame. Inline
+  actions and endpoints with `tx_dl` 8 use this form.
+- `{ txDl: 64, payload }`: send `payload`, the application payload of
+  `txFrame` without its PCI byte, in 64-byte frames with ISO 15765-2:2016 PCI.
+
+In both forms `txFrame` holds the 8-byte frame the profile describes. The
+transport sets bit-rate switching from the bus timing it applied. A transport
+that cannot send CAN FD must reject a request with `canFd`, as `SlcanTransport`
+does unless it is created with `canFd: true` for CANable 2 firmware. It must
+not fall back to classic CAN silently. A request without `canFd` must be sent
+as classic CAN.
+
+`sendRequestBatch` steps may carry `canFd`. A transport whose device batches
+only 8-byte frames sends a `txDl` 64 step outside the batch or splits the batch
+around it.
 
 Transport responsibilities:
 

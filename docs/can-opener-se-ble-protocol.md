@@ -122,8 +122,10 @@ Flags:
 - `0x04`: response CAN ID is extended, 29-bit
 - `0x08`: v3 variable-length ISO-TP application payload
 - `0x10`: v4 batch
+- `0x40`: send the request as CAN FD (section 8.1)
 
-Bits `5` through `7` are reserved.
+Bit `5` (`0x20`) is reserved for extended ISO-TP addressing. Bit `7` is
+reserved.
 
 ## 6. Classic request-only packets
 
@@ -164,6 +166,11 @@ Total length is 26 bytes. Response ID bounds are inclusive.
 
 These packets send the supplied bytes as one classic CAN frame. For an ISO-TP
 diagnostic request, the data must already contain its ISO-TP PCI byte.
+
+With flag `0x40`, the same 8 bytes go out unchanged as one CAN FD frame, and
+flow control for a multi-frame reply is an 8-byte FD frame. `dlc` must be `8`;
+any other value returns `0xE2`. This is the `tx_dl` 8 shortcut of section 8.1.
+It cannot send a frame longer than 8 bytes.
 
 Example, OBD-II speed query on bus 0:
 
@@ -250,9 +257,66 @@ dropped without an `0xE9` notification. There is no guaranteed delivery-only
 result for request-only v3 traffic under queue saturation. Set flag `0x01`
 only when the transaction semantically expects an ECU response.
 
-Current `can-opener-js` profile version 1 cannot create this packet through
-`VehicleRequest`; profile `send` is limited to one classic CAN frame. A custom
-application may use v3 directly.
+Profile `send` is one classic CAN frame, so a classic `VehicleRequest` maps to
+v2. A `VehicleRequest` with `canFd.txDl` 64 maps to v3 with flag `0x40`
+(section 8.1). A custom application may use v3 directly.
+
+### 8.1 CAN FD v3 request
+
+Set flags `0x08 | 0x40`. One byte is inserted after the timeout:
+
+```text
+[0]       sequence
+[1]       flags
+[2]       bus
+[3..6]    transmit_can_id:u32
+[7..10]   response_id_start:u32
+[11..14]  response_id_end:u32
+[15..16]  timeout_ms:u16
+[17]      tx_dl, 8 or 64
+[18]      payload_length, 1 through 225
+[19..]    application_payload, without PCI
+```
+
+The total write length must be exactly `19 + payload_length`. Any other
+`tx_dl` returns `0xE2`. Without flag `0x40`, v3 is the classic layout above.
+
+The firmware pads every frame it sends, including flow control, with `0x00` to
+`tx_dl`:
+
+- `tx_dl` 8 uses the classic PCI in an 8-byte FD frame. `02 01 0D` is sent as
+  `02 01 0D 00 00 00 00 00`.
+- `tx_dl` 64 uses ISO 15765-2:2016. A payload of up to 62 bytes is one frame
+  `00 LL` followed by the payload. A longer payload is a first frame with 62
+  data bytes and consecutive frames with 63.
+
+The firmware sets the bit-rate switch bit only when the bus data bitrate is
+non-zero and differs from the nominal bitrate. Configure the bus first with
+monitor opcode `0x08` (section 11.6). With data bitrate `0`, the request is
+FD format at the nominal rate, and an ECU that expects bit-rate switch may not
+decode it.
+
+Replies are parsed by their decoded frame length. A frame of 8 bytes or less
+uses the classic PCI, FD or not. A longer frame uses the 2016 layout. The
+notification payload is the reassembled application payload without PCI, as
+for classic requests.
+
+Example, OBD-II speed on bus 0 with `tx_dl` 64:
+
+Flags are `0x49`: expect a reply `0x01`, v3 payload `0x08`, and CAN FD `0x40`.
+
+```text
+2A 49 00
+DF 07 00 00
+E8 07 00 00
+EF 07 00 00
+F4 01
+40
+02
+01 0D
+```
+
+The CAN frame is `00 02 01 0D` followed by 60 bytes of `00`.
 
 ## 9. v4 batch request
 
@@ -286,6 +350,7 @@ Step flags:
 - `0x01`: expect response
 - `0x02`: transmit ID is extended
 - `0x04`: response ID is extended
+- `0x40`: send the 8 bytes as one CAN FD frame; `dlc` must be `8`
 
 If the step expects a response, append:
 
@@ -504,6 +569,10 @@ FD capability.
 Auto-detection requires three valid frames at a candidate rate. If the bus is
 asleep or no candidate matches, firmware restores the previous timing.
 
+Firmware replies only when auto-detection finishes. It listens for 250 ms per
+candidate rate, so on a silent bus the reply arrives after about 2.5 s. A
+client must wait at least that long before treating the command as timed out.
+
 Runtime timing returns to compiled defaults after BLE disconnect.
 
 ## 12. Monitor acknowledgements
@@ -588,12 +657,12 @@ Current firmware implements:
 - logical bus `0`
 - logical bus `1`
 - classic CAN request payloads up to eight bytes
+- CAN FD diagnostic requests and replies with `tx_dl` 8 or 64 (section 8.1)
 - ISO-TP application responses up to 512 bytes
 - v3 ISO-TP request payloads constrained by the 244-byte BLE write
 
-CAN controllers remain CAN FD capable for timing compatibility, but this BLE
-protocol does not currently carry CAN FD frames or payloads longer than eight
-bytes as raw frames.
+Monitor and capture records carry at most 8 data bytes. A longer FD frame on
+the live stream shows its first 8 bytes and reports a DLC of 8.
 
 Physical pins and connector routing are hardware-specific and are not part of
 the BLE protocol.
@@ -711,6 +780,8 @@ shapes and outcomes:
 
 - v2 packets select a bus explicitly
 - v3 carries an ISO-TP application payload
+- request flag `0x40` sends CAN FD; older firmware ignores the flag, sends v2
+  as classic frames, and misreads the longer v3 layout (usually `0xE1`)
 - v4 carries classic CAN batches
 - monitor opcode `0x04` enables BLE capture-all
 - monitor opcode `0x05` enables Wi-Fi Aware
@@ -738,7 +809,13 @@ A Can Opener SE `VehicleTransport` maps:
 - `VehicleRequest.txFrame.canId` to transmit CAN ID
 - `VehicleRequest.txFrame.data` and `dlc` to the raw classic CAN frame
 - response bounds and timeout to the v2 response fields
-- `VehicleBatchRequest` to one or more v4 writes
+- `VehicleRequest.canFd` `{ txDl: 8 }` to the v2 packet with flag `0x40`;
+  profiles produce it for endpoints with `tx_dl` 8 and for inline actions on an
+  FD bus
+- `VehicleRequest.canFd` `{ txDl: 64, payload }` to a v3 packet with flags
+  `0x08 | 0x40`, `tx_dl` 64, and `payload` as the application payload
+- `VehicleBatchRequest` to one or more v4 writes; a `txDl` 8 step sets step
+  flag `0x40`, and a `txDl` 64 step cannot be batched
 - `MonitorControlRequest` to add, remove, or clear on `0xA003`
 - monitor `0x81` frames to `CanFrame`
 - `configureBus` to monitor opcode `0x08`

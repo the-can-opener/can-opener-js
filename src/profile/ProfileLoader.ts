@@ -1,5 +1,6 @@
 import { parse } from "yaml";
 import { VirtualVehicleError } from "../errors.js";
+import type { CanFdTxDl } from "../transport/types.js";
 import type {
   BuiltInDecoderRef,
   DbcDecoderRef,
@@ -7,8 +8,10 @@ import type {
   LoadedVehicleProfile,
   ProfileAction,
   ProfileCanBusConfig,
+  ProfileCanBusFd,
   ProfileByte,
   ProfileEndpoint,
+  ProfileEndpointFd,
   ProfileMonitorSignal,
   ProfileQuery,
   ProfileValueNormalization,
@@ -35,6 +38,7 @@ interface RawProfile {
 interface RawCanBusConfig {
   bitrate?: unknown;
   data_bitrate?: unknown;
+  fd?: unknown;
 }
 
 interface RawEndpoint {
@@ -44,6 +48,7 @@ interface RawEndpoint {
   bus?: unknown;
   extended?: unknown;
   timeout_ms?: unknown;
+  fd?: unknown;
 }
 
 interface RawSequence {
@@ -132,8 +137,12 @@ export function mergeProfileCanBusConfigs(profiles: readonly LoadedVehicleProfil
       const existing = merged.get(config.bus);
       if (existing === undefined) {
         merged.set(config.bus, { ...config });
-      } else if (existing.bitrate !== config.bitrate || existing.dataBitrate !== config.dataBitrate) {
-        throw new VirtualVehicleError(`Conflicting CAN bus ${config.bus} timing across loaded profiles`);
+      } else if (
+        existing.bitrate !== config.bitrate ||
+        existing.dataBitrate !== config.dataBitrate ||
+        existing.fd?.isotpTxDl !== config.fd?.isotpTxDl
+      ) {
+        throw new VirtualVehicleError(`Conflicting CAN bus ${config.bus} settings across loaded profiles`);
       }
     }
   }
@@ -151,12 +160,31 @@ function normalizeCanBuses(raw: Record<string, RawCanBusConfig> | undefined): Pr
     if (config === null || typeof config !== "object" || Array.isArray(config)) {
       throw new VirtualVehicleError(`${path} must be an object`);
     }
+    const fd = config.fd !== undefined ? readCanBusFd(config.fd, `${path}.fd`) : undefined;
     return {
       bus,
       bitrate: readCanBitrate(config.bitrate, `${path}.bitrate`),
       ...(config.data_bitrate !== undefined ? { dataBitrate: readPositiveUint32(config.data_bitrate, `${path}.data_bitrate`) } : {}),
+      ...(fd !== undefined ? { fd } : {}),
     };
   }).sort((a, b) => a.bus - b.bus);
+}
+
+function readCanBusFd(raw: unknown, path: string): ProfileCanBusFd | undefined {
+  if (typeof raw === "boolean") {
+    return raw ? { isotpTxDl: 8 } : undefined;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be a boolean or an object`);
+  }
+  const isotp = (raw as { isotp?: unknown }).isotp;
+  if (isotp === undefined) {
+    return { isotpTxDl: 8 };
+  }
+  if (isotp === null || typeof isotp !== "object" || Array.isArray(isotp)) {
+    throw new VirtualVehicleError(`${path}.isotp must be an object`);
+  }
+  return { isotpTxDl: readTxDl((isotp as { tx_dl?: unknown }).tx_dl, `${path}.isotp.tx_dl`) };
 }
 
 function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
@@ -176,7 +204,26 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     ...(raw.bus !== undefined ? { bus: readBus(raw.bus, `endpoints.${name}.bus`) } : {}),
     ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
+    ...(raw.fd !== undefined ? { fd: readEndpointFd(raw.fd, `endpoints.${name}.fd`) } : {}),
   };
+}
+
+function readEndpointFd(raw: unknown, path: string): ProfileEndpointFd {
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be a boolean or an object`);
+  }
+  return { txDl: readTxDl((raw as { tx_dl?: unknown }).tx_dl, `${path}.tx_dl`) };
+}
+
+function readTxDl(raw: unknown, path: string): CanFdTxDl {
+  const txDl = readNumber(raw, path);
+  if (txDl !== 8 && txDl !== 64) {
+    throw new VirtualVehicleError(`${path} must be 8 or 64`);
+  }
+  return txDl;
 }
 
 function normalizeResponseRange(raw: unknown, path: string): ResponseIdRange {
@@ -382,7 +429,7 @@ function readSendStep(
   raw: unknown,
   path: string,
   endpoint?: string,
-): Pick<RequestStep, "endpoint" | "requestId" | "send"> {
+): Pick<RequestStep, "endpoint" | "requestId" | "bus" | "fd" | "send"> {
   if (Array.isArray(raw)) {
     return {
       ...(endpoint !== undefined ? { endpoint } : {}),
@@ -391,11 +438,12 @@ function readSendStep(
   }
 
   if (raw !== null && typeof raw === "object") {
-    const send = raw as { request_id?: unknown; bus?: unknown; request?: unknown };
+    const send = raw as { request_id?: unknown; bus?: unknown; fd?: unknown; request?: unknown };
     if (send.request_id !== undefined && send.request !== undefined) {
       return {
         requestId: readNumber(send.request_id, `${path}.request_id`),
         ...(send.bus !== undefined ? { bus: readBus(send.bus, `${path}.bus`) } : {}),
+        ...(send.fd !== undefined ? { fd: readBoolean(send.fd, `${path}.fd`) } : {}),
         send: Uint8Array.from(readByteArray(
           Array.isArray(send.request) ? send.request : undefined,
           `${path}.request`,

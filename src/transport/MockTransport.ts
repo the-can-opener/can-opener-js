@@ -9,6 +9,7 @@ import type {
   VehicleBatchRequest,
   VehicleBatchResponse,
   VehicleBatchStepResult,
+  VehicleCanFdRequest,
   VehicleRequest,
   VehicleTransport,
 } from "./types.js";
@@ -27,6 +28,7 @@ export class MockTransport implements VehicleTransport {
   readonly monitorUpdates: MonitorControlRequest[] = [];
   readonly busConfigUpdates: CanBusConfigRequest[] = [];
 
+  private readonly busConfigResponses = new Map<number, CanBusConfigResponse>();
   private readonly callbacks = new Set<SnapshotCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
   private readonly monitorCanIdsByBus = new Map<number, Set<number>>();
@@ -38,9 +40,19 @@ export class MockTransport implements VehicleTransport {
     this.connected = true;
   }
 
+  /** Makes the next `configureBus` for `response.bus` return `response`, e.g. an auto-detect result. */
+  scriptBusConfigResponse(response: CanBusConfigResponse): void {
+    this.busConfigResponses.set(response.bus, { ...response });
+  }
+
   async configureBus(req: CanBusConfigRequest): Promise<CanBusConfigResponse> {
     this.assertConnected();
     this.busConfigUpdates.push({ ...req });
+    const scripted = this.busConfigResponses.get(req.bus);
+    if (scripted !== undefined) {
+      this.busConfigResponses.delete(req.bus);
+      return { ...scripted };
+    }
     if (!isValidBus(req.bus)) return { status: "invalid_bus", bus: req.bus };
     if ((req.bitrate !== "auto" && !isValidBitrate(req.bitrate)) ||
         (req.dataBitrate !== undefined && !isValidBitrate(req.dataBitrate))) {
@@ -279,6 +291,7 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
   return {
     ...req,
     txFrame: cloneFrame(req.txFrame),
+    ...(req.canFd !== undefined ? { canFd: cloneCanFd(req.canFd) } : {}),
     ...(req.diagnostic !== undefined
       ? {
           diagnostic: {
@@ -291,6 +304,19 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
       : {}),
     ...(req.action !== undefined ? { action: { ...req.action } } : {}),
   };
+}
+
+function cloneCanFd(canFd: VehicleCanFdRequest): VehicleCanFdRequest {
+  switch (canFd.txDl) {
+    case 8:
+      return { txDl: 8 };
+    case 64:
+      return { txDl: 64, payload: canFd.payload.slice() };
+    default: {
+      const unsupported: never = canFd;
+      throw new Error(`Unsupported CAN FD request ${String(unsupported)}`);
+    }
+  }
 }
 
 function cloneBatchRequest(req: VehicleBatchRequest): VehicleBatchRequest {

@@ -3,7 +3,12 @@ import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import type { VehicleProfileSource } from "../src/profile/types.js";
 import { NoEcuResponseError } from "../src/errors.js";
 import { SlcanTransport, type SlcanBytePort } from "../src/transport/SlcanTransport.js";
-import { encodeSlcanDataFrame, parseSlcanFrame } from "../src/transport/slcanProtocol.js";
+import {
+  encodeSlcanDataFrame,
+  IsotpReassembly,
+  parseSlcanFrame,
+  slcanBitrateCommand,
+} from "../src/transport/slcanProtocol.js";
 
 class FakeSlcanPort implements SlcanBytePort {
   readonly written: string[] = [];
@@ -121,6 +126,43 @@ describe("SLCAN protocol", () => {
     expect(encoded).toBe("T18DB33F1302010C\r");
     expect(parseSlcanFrame("T18DAF1102410C\r")?.extended).toBe(true);
   });
+
+  it("uses the CANable speed codes, with S9 only on CANable 2", () => {
+    expect(slcanBitrateCommand(750_000)).toBe("S7\r");
+    expect(slcanBitrateCommand(800_000)).toBeUndefined();
+    expect(slcanBitrateCommand(83_333)).toBeUndefined();
+    expect(slcanBitrateCommand(83_333, true)).toBe("S9\r");
+  });
+
+  it("encodes CAN FD frames with the CANable 2 commands and length codes", () => {
+    const data = new Uint8Array(64);
+    data[1] = 0x02;
+    expect(encodeSlcanDataFrame({ canId: 0x7df, dlc: 64, data }, "fd_brs")).toBe(
+      `b7DFF0002${"00".repeat(62)}\r`,
+    );
+    expect(encodeSlcanDataFrame({ canId: 0x18db33f1, extended: true, dlc: 12, data }, "fd")).toBe(
+      `D18DB33F190002${"00".repeat(10)}\r`,
+    );
+    expect(() => encodeSlcanDataFrame({ canId: 0x7df, dlc: 10, data }, "fd")).toThrow(/CAN FD frames must be/u);
+    expect(() => encodeSlcanDataFrame({ canId: 0x7df, dlc: 12, data })).toThrow(/limited to 8 bytes/u);
+  });
+
+  it("parses CAN FD lines into byte lengths", () => {
+    const parsed = parseSlcanFrame(`b7E8F0003620D58${"00".repeat(59)}`);
+    expect(parsed).toMatchObject({ canId: 0x7e8, dlc: 64 });
+    expect(parseSlcanFrame(`B18DAF1109${"AA".repeat(12)}`)).toMatchObject({ dlc: 12, extended: true });
+    expect(parseSlcanFrame("d7E8803410D5800000000")?.dlc).toBe(8);
+    expect(parseSlcanFrame("t7E8F00")).toBeUndefined();
+  });
+
+  it("reads the escaped single-frame length from a CAN FD frame", () => {
+    const reassembly = new IsotpReassembly(0x7df, false, 0x7e8, 0x7ef, false);
+    const frame = parseSlcanFrame(`b7E8F0003620D58${"00".repeat(59)}`);
+    expect(frame).toBeDefined();
+    const step = frame === undefined ? undefined : reassembly.push(frame);
+    expect(step?.type).toBe("done");
+    expect(Array.from(step?.type === "done" ? step.payload : [])).toEqual([0x62, 0x0d, 0x58]);
+  });
 });
 
 describe("SlcanTransport", () => {
@@ -232,7 +274,93 @@ describe("SlcanTransport", () => {
     });
     await expect(transport.configureBus({ bus: 0, bitrate: "auto" })).resolves.toMatchObject({
       status: "auto_detect_failed",
+      bitrate: 250_000,
     });
+    await expect(
+      transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 }),
+    ).resolves.toMatchObject({ status: "invalid_bitrate" });
+    await transport.disconnect();
+  });
+
+  it("sets the CAN FD data bitrate before opening the channel", async () => {
+    const port = new FakeSlcanPort();
+    const transport = new SlcanTransport(port, { canFd: true });
+    await transport.connect();
+    port.written.length = 0;
+
+    await expect(
+      transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 }),
+    ).resolves.toEqual({ status: "ok", bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 });
+    expect(port.written).toEqual(["C\r", "S6\r", "Y2\r", "O\r"]);
+    await expect(
+      transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 4_000_000 }),
+    ).resolves.toMatchObject({ status: "invalid_bitrate" });
+    await transport.disconnect();
+  });
+
+  it("rejects CAN FD requests unless the adapter runs CANable 2 firmware", async () => {
+    const port = new FakeSlcanPort();
+    const transport = new SlcanTransport(port);
+    await transport.connect();
+
+    await expect(transport.sendRequest({
+      txFrame: { canId: 0x7df, dlc: 8, data: Uint8Array.of(0x02, 0x01, 0x0d, 0, 0, 0, 0, 0) },
+      canFd: { txDl: 8 },
+      expectCanResponse: false,
+    })).rejects.toThrow(/canFd: true/u);
+    await transport.disconnect();
+  });
+
+  it("sends a tx_dl 8 request as an 8-byte CAN FD frame without BRS by default", async () => {
+    const port = new FakeSlcanPort();
+    port.onWrite = (text) => {
+      if (text.startsWith("d7DF")) {
+        port.pushRx("d7E8803410D5800000000\r");
+      }
+    };
+    const transport = new SlcanTransport(port, { canFd: true });
+    await transport.connect();
+
+    const payload = await transport.sendRequest({
+      txFrame: { canId: 0x7df, dlc: 3, data: Uint8Array.of(0x02, 0x01, 0x0d) },
+      canFd: { txDl: 8 },
+      expectCanResponse: true,
+      responseIdStart: 0x7e8,
+      responseIdEnd: 0x7ef,
+    });
+
+    expect(Array.from(payload ?? [])).toEqual([0x41, 0x0d, 0x58]);
+    expect(port.written).toContain("d7DF802010D0000000000\r");
+    await transport.disconnect();
+  });
+
+  it("sends a tx_dl 64 request as an escaped single frame and answers with 64-byte flow control", async () => {
+    const port = new FakeSlcanPort();
+    const firstFrame = `b7E8F1046620101${"11".repeat(59)}\r`;
+    port.onWrite = (text) => {
+      if (text.startsWith("b7DF")) {
+        port.pushRx(firstFrame);
+      } else if (text.startsWith("b7E0")) {
+        port.pushRx(`b7E8B21${"22".repeat(10)}${"00".repeat(9)}\r`);
+      }
+    };
+    const transport = new SlcanTransport(port, { canFd: true });
+    await transport.connect();
+    await transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 });
+
+    const payload = await transport.sendRequest({
+      txFrame: { canId: 0x7df, dlc: 8, data: Uint8Array.of(0x03, 0x22, 0x01, 0x01, 0, 0, 0, 0) },
+      canFd: { txDl: 64, payload: Uint8Array.of(0x22, 0x01, 0x01) },
+      expectCanResponse: true,
+      responseIdStart: 0x7e8,
+      responseIdEnd: 0x7ef,
+    });
+
+    expect(port.written).toContain(`b7DFF0003220101${"00".repeat(59)}\r`);
+    expect(port.written).toContain(`b7E0F30${"00".repeat(63)}\r`);
+    expect(payload).toHaveLength(0x46);
+    expect(Array.from(payload?.subarray(0, 3) ?? [])).toEqual([0x62, 0x01, 0x01]);
+    expect(Array.from(payload?.subarray(62) ?? [])).toEqual(Array(8).fill(0x22));
     await transport.disconnect();
   });
 

@@ -2,7 +2,7 @@ import type { DbcController } from "../dbc/DbcController.js";
 import type { CanFrame, ActionOptions, CanPayload, VehicleSignal } from "../dbc/types.js";
 import { BatchUnsupportedError, NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { assertExpectedResponse, buildStepFrame, responseBounds } from "../profile/RequestBuilder.js";
+import { assertExpectedResponse, buildStepFrame, canFdRequestFields, responseBounds } from "../profile/RequestBuilder.js";
 import type { ActionRunResult, ProfileAction, RequestStep } from "../profile/types.js";
 import type { VehicleBatchStep, VehicleBatchStepResult, VehicleTransport } from "../transport/types.js";
 
@@ -279,11 +279,18 @@ export class ActionController {
       throw new Error(`Action ${action.name} step does not declare an endpoint or request_id`);
     }
     const timeoutMs = step.timeoutMs ?? endpoint?.timeoutMs;
+    const canFd = endpoint !== undefined ? endpoint.canFd : this.capabilities?.inlineStepCanFd(step, action.name);
+    const txFrame = buildStepFrame(step, endpoint, canFd);
     return {
       step,
       request: {
         signalName: action.name,
-        txFrame: buildStepFrame(step, endpoint),
+        txFrame,
+        ...canFdRequestFields(
+          canFd,
+          txFrame,
+          endpoint !== undefined ? `Endpoint ${endpoint.name}` : `Action ${action.name}`,
+        ),
         expectCanResponse: step.expect !== undefined,
         ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
         ...(endpoint?.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),

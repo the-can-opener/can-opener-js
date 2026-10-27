@@ -28,6 +28,11 @@ import type {
   VehicleDisconnectOptions,
   VehicleTransport,
 } from "../transport/types.js";
+import {
+  configureCanBuses,
+  mergeCanBusTimingReports,
+  type CanBusTimingReport,
+} from "./canBusTiming.js";
 import type { VehicleState } from "./VehicleState.js";
 
 export interface VirtualVehicleInternals {
@@ -37,6 +42,8 @@ export interface VirtualVehicleInternals {
   actions: ActionController;
   capabilities: CapabilityRegistry;
   disposeFrames: () => void;
+  /** What the transport reported when each bus's profile timing was applied. */
+  busTiming: CanBusTimingReport[];
 }
 
 interface ResolvedSubscriptionRequest {
@@ -46,6 +53,8 @@ interface ResolvedSubscriptionRequest {
 }
 
 export class VirtualVehicle {
+  private busTimingQueue: Promise<unknown> = Promise.resolve();
+
   constructor(
     readonly id: string,
     readonly state: VehicleState,
@@ -205,10 +214,51 @@ export class VirtualVehicle {
     this.internals.actions.clearScheduled();
   }
 
+  /**
+   * Swaps the loaded profiles. Bus timing they declare is not sent until
+   * `configureBuses()` runs, so call it before sending requests that need it.
+   */
   reloadProfiles(sources: readonly VehicleProfileSource[]): void {
     const profiles = new ProfileLoader().load(sources);
     this.internals.capabilities.load(profiles);
     this.dbc.load(profiles.flatMap((profile) => profile.dbcFiles));
+  }
+
+  /**
+   * Applies bus timing declared by the loaded profiles and returns the
+   * adapter's report for every bus configured so far. Buses whose requested
+   * timing has not changed are not sent again. Calls run one at a time, so
+   * overlapping reloads never repeat an auto-detect; a bus applied before a
+   * failure keeps its report.
+   */
+  configureBuses(): Promise<readonly CanBusTimingReport[]> {
+    const run = this.busTimingQueue.then(() => this.applyBusTiming());
+    this.busTimingQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Timing the adapter reported per bus, including a bitrate it found when the
+   * profile asked for `auto`. Buses no profile configured are absent; they run
+   * on the adapter's default timing.
+   */
+  busTiming(): readonly CanBusTimingReport[] {
+    return this.internals.busTiming.map((report) => ({
+      ...report,
+      requested: { ...report.requested },
+    }));
+  }
+
+  private async applyBusTiming(): Promise<readonly CanBusTimingReport[]> {
+    await configureCanBuses(
+      this.transport,
+      this.internals.capabilities.busConfigs(),
+      this.internals.busTiming,
+      (report) => {
+        this.internals.busTiming = mergeCanBusTimingReports(this.internals.busTiming, [report]);
+      },
+    );
+    return this.busTiming();
   }
 
   handleFrame(

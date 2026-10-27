@@ -1,4 +1,5 @@
 import type { DbcFile } from "../dbc/types.js";
+import type { CanFdTxDl } from "../transport/types.js";
 
 export type ProfileByte = number | "*";
 
@@ -13,16 +14,37 @@ export type CanBitrate = number | "auto";
 export interface ProfileCanBusConfig {
   /** Logical CAN controller selected by endpoint/signal `bus`. */
   bus: number;
-  /** Arbitration/nominal bitrate in bits per second. */
+  /**
+   * Nominal (arbitration) bitrate in bits per second. Every frame, classic or
+   * FD, is arbitrated and acknowledged at this rate.
+   */
   bitrate: CanBitrate;
-  /** Optional CAN FD data-phase bitrate in bits per second. */
+  /**
+   * CAN FD data-phase bitrate in bits per second. Only the data bytes of FD
+   * frames sent with bit-rate switching use it. Omitted: the nominal rate.
+   */
   dataBitrate?: number;
+  /** Frames sent on this bus default to CAN FD. Omitted: classic CAN. */
+  fd?: ProfileCanBusFd;
+}
+
+export interface ProfileCanBusFd {
+  /** ISO-TP frame size for endpoints on this bus that do not set their own. */
+  isotpTxDl: CanFdTxDl;
 }
 
 export interface ResponseIdRange {
   start: number;
   end: number;
 }
+
+export interface ProfileCanFdConfig {
+  /** ISO-TP frame size: `8` keeps the classic PCI in an FD frame, `64` uses the 2016 escape form. */
+  txDl: CanFdTxDl;
+}
+
+/** `true`: CAN FD at the bus's ISO-TP frame size. `{ txDl }`: CAN FD at that size. `false`: classic CAN. */
+export type ProfileEndpointFd = boolean | ProfileCanFdConfig;
 
 export interface ProfileEndpoint {
   name: string;
@@ -32,6 +54,14 @@ export interface ProfileEndpoint {
   bus?: number;
   extended?: boolean;
   timeoutMs?: number;
+  /** Frame format as declared. Omitted: the bus default (`can.buses.<n>.fd`). */
+  fd?: ProfileEndpointFd;
+}
+
+/** An endpoint with its bus default applied, as `CapabilityRegistry` returns it. */
+export interface ResolvedProfileEndpoint extends ProfileEndpoint {
+  /** CAN FD setting for this endpoint's requests. Omitted: classic CAN. */
+  canFd?: ProfileCanFdConfig;
 }
 
 export interface ExpectPattern {
@@ -61,6 +91,12 @@ export interface RequestStep {
   requestId?: number;
   /** Used by inline request_id actions. Endpoint-backed steps inherit endpoint.bus. */
   bus?: number;
+  /**
+   * Inline request_id steps only: send the frame as CAN FD (`true`) or
+   * classic (`false`). Omitted: the bus default. Endpoint-backed steps use
+   * the endpoint's setting.
+   */
+  fd?: boolean;
   send: Uint8Array;
   expect?: ExpectPattern;
   /** Overrides the endpoint response timeout for this step. */
