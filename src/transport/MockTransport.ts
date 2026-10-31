@@ -1,5 +1,5 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
-import { NoEcuResponseError } from "../errors.js";
+import { CanTransmitError, NoEcuResponseError } from "../errors.js";
 import type {
   CanBusConfigRequest,
   CanBusConfigResponse,
@@ -92,8 +92,9 @@ export class MockTransport implements VehicleTransport {
 
   /**
    * Mirrors the device's batch semantics on top of `sendRequest`: steps run in
-   * order on one bus, a `NoEcuResponseError` maps to `no_response`, any other
-   * failure maps to `error`, and later steps are `skipped` after the first
+   * order on one bus, a `NoEcuResponseError` maps to `no_response`, a
+   * `CanTransmitError` maps to `tx_failed`, any other failure maps to `error`,
+   * and later steps are `skipped` after the first
    * failure unless `continueOnError` is set.
    */
   async sendRequestBatch(req: VehicleBatchRequest): Promise<VehicleBatchResponse> {
@@ -136,6 +137,9 @@ export class MockTransport implements VehicleTransport {
     } catch (error: unknown) {
       if (error instanceof NoEcuResponseError) {
         return { status: "no_response" };
+      }
+      if (error instanceof CanTransmitError) {
+        return { status: "tx_failed" };
       }
       return { status: "error", error: error instanceof Error ? error.message : String(error) };
     }

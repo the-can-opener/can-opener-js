@@ -34,6 +34,18 @@ export class NoEcuResponseError extends VirtualVehicleError {
 }
 
 /**
+ * Thrown when the device could not put the request frame on the bus, for
+ * example because no node acknowledged it (wrong bitrate, bus off, nothing
+ * connected). Unlike `NoEcuResponseError`, the request never left the device.
+ */
+export class CanTransmitError extends VirtualVehicleError {
+  constructor(message = "CAN frame was not transmitted") {
+    super(message);
+    this.name = "CanTransmitError";
+  }
+}
+
+/**
  * Thrown by `VehicleTransport.sendRequestBatch` when the connected device does
  * not implement batched requests. Nothing was transmitted on the bus, so the
  * caller can safely replay the same steps as individual requests.

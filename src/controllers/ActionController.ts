@@ -1,6 +1,6 @@
 import type { DbcController } from "../dbc/DbcController.js";
 import type { CanFrame, ActionOptions, CanPayload, VehicleSignal } from "../dbc/types.js";
-import { BatchUnsupportedError, NoEcuResponseError } from "../errors.js";
+import { BatchUnsupportedError, CanTransmitError, NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { assertExpectedResponse, buildStepFrame, canFdRequestFields, responseBounds } from "../profile/RequestBuilder.js";
 import type { ActionRunResult, ProfileAction, RequestStep } from "../profile/types.js";
@@ -242,6 +242,8 @@ export class ActionController {
         return this.verifyStep(action, step, result.payload);
       case "no_response":
         throw new NoEcuResponseError(`ECU did not respond to action ${action.name}`);
+      case "tx_failed":
+        throw new CanTransmitError(`Action ${action.name} frame was not transmitted on the bus`);
       case "error":
         throw new Error(`Action ${action.name} step failed: ${result.error ?? "transport error"}`);
       case "skipped":
