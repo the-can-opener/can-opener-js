@@ -296,6 +296,7 @@ function cloneRequest(req: VehicleRequest): VehicleRequest {
     ...req,
     txFrame: cloneFrame(req.txFrame),
     ...(req.canFd !== undefined ? { canFd: cloneCanFd(req.canFd) } : {}),
+    ...(req.isotpAddressing !== undefined ? { isotpAddressing: { ...req.isotpAddressing } } : {}),
     ...(req.diagnostic !== undefined
       ? {
           diagnostic: {

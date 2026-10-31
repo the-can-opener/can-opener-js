@@ -122,10 +122,54 @@ Flags:
 - `0x04`: response CAN ID is extended, 29-bit
 - `0x08`: v3 variable-length ISO-TP application payload
 - `0x10`: v4 batch
+- `0x20`: ISO-TP extended or mixed addressing (section 5.1)
 - `0x40`: send the request as CAN FD (section 8.1)
 
-Bit `5` (`0x20`) is reserved for extended ISO-TP addressing. Bit `7` is
-reserved.
+Bit `7` is reserved.
+
+### 5.1 ISO-TP addressing
+
+ISO 15765-2 extended and mixed addressing put one address byte in front of
+the PCI of every frame in an exchange: single, first, consecutive and flow
+control, in both directions. BMW diagnostics are the common case: the tester
+sends to `0x6F1` with the ECU address first, and the ECU answers on `0x600`
+plus its address with `F1`, the tester address, first.
+
+Flag `0x20` enables this for one request. It adds two bytes directly before
+`transmit_can_id` in the v2 and v3 layouts, and directly after `step_flags`
+in a v4 step. Every later field moves back by two.
+
+```text
+[n]       tx_address    first byte of every frame sent to the ECU
+[n+1]     rx_address    first byte of every frame the ECU sends back
+```
+
+Extended addressing sets `tx_address` to the target address and `rx_address`
+to the source address. Mixed addressing sets both to the address extension.
+The firmware does not distinguish the two.
+
+With flag `0x20`:
+
+- The firmware puts `tx_address` in front of the PCI of every frame it builds:
+  v3 single, first and consecutive frames, and every flow control frame.
+- A v2 or v4 step `data[8]` is still the ready-to-send frame, so the client
+  places `tx_address` in `data[0]` and the PCI in `data[1]` itself.
+- Only response frames whose first byte is `rx_address` belong to the
+  exchange. Other frames in the response ID range are ignored. The firmware
+  strips the address byte and the PCI; the notification payload is the
+  application payload, as for normal addressing.
+- Flow control for a multi-frame reply goes to `transmit_can_id` with
+  `tx_address` first, `tx_address 30 00 00` padded to the frame size, for
+  both 11-bit and 29-bit IDs. The `response_id - 8` rule of section 7.1 does
+  not apply.
+- The address byte takes one byte from every frame: a classic single frame
+  carries 6 application bytes, a first frame `tx_dl - 3`, a consecutive frame
+  `tx_dl - 2`, and a `tx_dl` 64 single frame 61 bytes laid out as
+  `tx_address 00 length payload`.
+
+The flag is valid only on layouts with a bus byte. A legacy packet with flag
+`0x20` returns `0xE1`. Firmware older than this document ignores the flag and
+misreads the longer layout, usually as `0xE1`.
 
 ## 6. Classic request-only packets
 
@@ -140,7 +184,10 @@ The v2 packet explicitly selects a logical CAN bus:
 [8..15]   data[8]
 ```
 
-Total length is 16 bytes.
+Total length is 16 bytes. With flag `0x20` the two address bytes of section
+5.1 follow `bus`, every later field moves back by two, and the total length is
+18 bytes. The frame is sent unchanged, so the addresses only have to be
+present.
 
 A normal request-only packet produces no notification. This includes failures
 such as an unavailable bus, invalid DLC, invalid CAN ID, and transmit failure.
@@ -166,6 +213,40 @@ Total length is 26 bytes. Response ID bounds are inclusive.
 
 These packets send the supplied bytes as one classic CAN frame. For an ISO-TP
 diagnostic request, the data must already contain its ISO-TP PCI byte.
+
+With flag `0x20` (section 5.1):
+
+```text
+[0]       sequence
+[1]       flags, bits 0 and 5 set
+[2]       bus
+[3]       tx_address
+[4]       rx_address
+[5..8]    transmit_can_id:u32
+[9..12]   response_id_start:u32
+[13..16]  response_id_end:u32
+[17..18]  timeout_ms:u16
+[19]      dlc, 0 through 8
+[20..27]  data[8]
+```
+
+Total length is 28 bytes. `data[0]` must be `tx_address` and `data[1]` the
+PCI. Example, BMW VIN request to the engine ECU at address `0x12`:
+
+```text
+2B 21 00
+12 F1
+F1 06 00 00
+12 06 00 00
+12 06 00 00
+F4 01
+08
+12 03 22 F1 90 00 00 00
+```
+
+The ECU answers `612: F1 10 14 62 F1 90 ...`, the firmware sends
+`6F1: 12 30 00 00 00 00 00 00`, and the notification payload begins
+`62 F1 90`.
 
 With flag `0x40`, the same 8 bytes go out unchanged as one CAN FD frame, and
 flow control for a multi-frame reply is an 8-byte FD frame. `dlc` must be `8`;
@@ -223,6 +304,10 @@ pair must follow the `response_id - 8` convention for multi-frame responses.
 For example, request `0x745` and response `0x765` will receive flow control at
 `0x75D`, not at `0x745`. Single-frame responses are unaffected.
 
+With flag `0x20`, flow control always uses the original transmit CAN ID with
+`tx_address` first, and only frames starting with `rx_address` are read
+(section 5.1).
+
 ## 8. v3 variable-length ISO-TP request
 
 Set flag `0x08` when the BLE packet carries an ISO-TP application payload
@@ -246,6 +331,29 @@ The total write length must be exactly `18 + payload_length` and no more than
 The firmware adds ISO-TP PCI, segments long requests, obeys ECU flow control,
 supports block size and STmin, and optionally waits for a reassembled
 response. Set flag `0x01` when a response is expected.
+
+With flag `0x20` the two address bytes of section 5.1 follow `bus`, every
+later field moves back by two, and the total write length is
+`20 + payload_length`. The payload stays application bytes; the firmware puts
+`tx_address` in front of the PCI of every frame it sends and reads flow
+control and reply frames only when they start with `rx_address`.
+
+```text
+[0]       sequence
+[1]       flags, bits 3 and 5 set
+[2]       bus
+[3]       tx_address
+[4]       rx_address
+[5..8]    transmit_can_id:u32
+[9..12]   response_id_start:u32
+[13..16]  response_id_end:u32
+[17..18]  timeout_ms:u16
+[19]      payload_length, 1 through 224
+[20..]    application_payload
+```
+
+With flags `0x08 | 0x20 | 0x40`, `tx_dl` sits at `[19]`, `payload_length` at
+`[20]`, and the total write length is `21 + payload_length`.
 
 Every v3 request returns a request notification, including a request-only v3
 write that reaches the request task. The notification reports its final
@@ -350,6 +458,7 @@ Step flags:
 - `0x01`: expect response
 - `0x02`: transmit ID is extended
 - `0x04`: response ID is extended
+- `0x20`: ISO-TP extended or mixed addressing (section 5.1)
 - `0x40`: send the 8 bytes as one CAN FD frame; `dlc` must be `8`
 
 If the step expects a response, append:
@@ -359,6 +468,13 @@ If the step expects a response, append:
 [20..23]  response_id_end:u32
 [24..25]  timeout_ms:u16
 ```
+
+With step flag `0x20`, `tx_address` and `rx_address` follow `step_flags` and
+every later field moves back by two: `transmit_can_id` at `[3..6]`, `dlc` at
+`[7]`, `data` at `[8..15]`, `post_delay_ms` at `[16..17]`, and the response
+fields, when present, at `[18..27]`. `data[0]` must be `tx_address`. Each
+step chooses its own addressing, so a batch may mix addressed and normal
+steps.
 
 A zero response timeout selects the firmware default of 1000 ms.
 
@@ -782,6 +898,9 @@ shapes and outcomes:
 - v3 carries an ISO-TP application payload
 - request flag `0x40` sends CAN FD; older firmware ignores the flag, sends v2
   as classic frames, and misreads the longer v3 layout (usually `0xE1`)
+- request flag `0x20` adds ISO-TP extended or mixed addressing; older
+  firmware ignores the flag and misreads the two-byte-longer layouts
+  (usually `0xE1`)
 - v4 carries classic CAN batches
 - monitor opcode `0x04` enables BLE capture-all
 - monitor opcode `0x05` enables Wi-Fi Aware
@@ -816,6 +935,9 @@ A Can Opener SE `VehicleTransport` maps:
   `0x08 | 0x40`, `tx_dl` 64, and `payload` as the application payload
 - `VehicleBatchRequest` to one or more v4 writes; a `txDl` 8 step sets step
   flag `0x40`, and a `txDl` 64 step cannot be batched
+- `VehicleRequest.isotpAddressing` `{ tx, rx }` to flag `0x20` with
+  `tx_address = tx` and `rx_address = rx` in the v2, v3 or v4 step layout;
+  `txFrame.data` already starts with `tx`, so a v2 frame is sent as given
 - `MonitorControlRequest` to add, remove, or clear on `0xA003`
 - monitor `0x81` frames to `CanFrame`
 - `configureBus` to monitor opcode `0x08`
