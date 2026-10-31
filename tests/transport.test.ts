@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CanPayload } from "../src/dbc/types.js";
-import { NoEcuResponseError } from "../src/errors.js";
+import { CanTransmitError, NoEcuResponseError } from "../src/errors.js";
 import { MockTransport } from "../src/transport/index.js";
 import type { VehicleBatchStep, VehicleRequest } from "../src/transport/types.js";
 
@@ -13,7 +13,7 @@ function step(canId: number, data: number[], extra: Partial<VehicleBatchStep> = 
 }
 
 class FlakyTransport extends MockTransport {
-  constructor(private readonly failures: Map<number, "timeout" | "error">) {
+  constructor(private readonly failures: Map<number, "timeout" | "tx" | "error">) {
     super();
   }
 
@@ -22,6 +22,10 @@ class FlakyTransport extends MockTransport {
     if (failure === "timeout") {
       this.requests.push(req);
       throw new NoEcuResponseError();
+    }
+    if (failure === "tx") {
+      this.requests.push(req);
+      throw new CanTransmitError();
     }
     if (failure === "error") {
       this.requests.push(req);
@@ -68,6 +72,17 @@ describe("MockTransport batches", () => {
 
     expect(response.steps.map((result) => result.status)).toEqual(["ok", "no_response", "skipped"]);
     expect(transport.requests).toHaveLength(2);
+  });
+
+  it("reports a frame the device could not transmit as tx_failed", async () => {
+    const transport = new FlakyTransport(new Map([[0x200, "tx"]]));
+    await transport.connect();
+
+    const response = await transport.sendRequestBatch({
+      steps: [step(0x100, [0x01]), step(0x200, [0x02]), step(0x300, [0x03])],
+    });
+
+    expect(response.steps).toEqual([{ status: "ok" }, { status: "tx_failed" }, { status: "skipped" }]);
   });
 
   it("keeps going after failures when continueOnError is set", async () => {

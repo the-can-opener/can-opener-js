@@ -5,7 +5,11 @@ import type {
   CanPayload,
   VehicleSignal,
 } from "../dbc/types.js";
-import { BatchUnsupportedError, NoEcuResponseError } from "../errors.js";
+import {
+  BatchUnsupportedError,
+  CanTransmitError,
+  NoEcuResponseError,
+} from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { isotpAddressingFields } from "../profile/isotpAddressing.js";
 import {
@@ -27,6 +31,15 @@ import type {
 
 type Timer = ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
 const ECU_WAKE_ACTION = "ECU_WAKE";
+/**
+ * A woken ECU needs a moment on the bus before it answers, and one wake is not
+ * always enough, so the request is retried with a growing settle delay. Each
+ * retry already waits out the step's response timeout when the ECU is not up
+ * yet, so the settle delay is kept short and the ECU is probed often rather
+ * than waited on.
+ */
+const ECU_WAKE_ATTEMPTS = 5;
+const ECU_WAKE_SETTLE_MS = 100;
 /** Used when a step omits `delay_ms`. Set `delay_ms: 0` to send the next frame immediately. */
 const DEFAULT_STEP_DELAY_MS = 0;
 
@@ -40,6 +53,27 @@ interface ResolvedStep {
 }
 
 type StepVerdict = "verified" | "unverified" | "mismatch";
+
+interface RunStepsOptions {
+  /**
+   * Keep transmitting after a step that nothing on the bus acknowledged or
+   * answered. Used for `ECU_WAKE`, whose frames are expected to go unanswered
+   * on a sleeping bus: each one still reaches the wire and helps wake nodes.
+   */
+  tolerateSilentBus?: boolean;
+}
+
+interface RunActionOptions {
+  /** Skip the guaranteed-to-fail first probe when the bus is already known asleep. */
+  wakeFirst?: boolean;
+}
+
+/** The request reached the wire but nothing acknowledged or answered it: the bus may be asleep. */
+function isSilentBusError(error: unknown): boolean {
+  return (
+    error instanceof NoEcuResponseError || error instanceof CanTransmitError
+  );
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -126,14 +160,21 @@ export class ActionController {
     this.scheduled.clear();
   }
 
-  async run(action: ProfileAction): Promise<ActionRunResult> {
+  async run(
+    action: ProfileAction,
+    options: RunActionOptions = {},
+  ): Promise<ActionRunResult> {
+    if (options.wakeFirst === true && action.name !== ECU_WAKE_ACTION) {
+      const wakeAction = this.resolveEcuWakeAction();
+      if (wakeAction !== undefined) {
+        return this.runAfterEcuWake(action, wakeAction);
+      }
+    }
+
     try {
       return await this.runSteps(action);
     } catch (error: unknown) {
-      if (
-        !(error instanceof NoEcuResponseError) ||
-        action.name === ECU_WAKE_ACTION
-      ) {
+      if (!isSilentBusError(error) || action.name === ECU_WAKE_ACTION) {
         throw error;
       }
 
@@ -142,23 +183,54 @@ export class ActionController {
         throw error;
       }
 
-      await this.runSteps(wakeAction);
-      // The retried request still reaches the bus even when its response
-      // cannot be verified (the ECU may still be waking up), so report an
-      // unknown outcome instead of a hard failure.
-      try {
-        const retried = await this.runSteps(action);
-        return retried === false ? "unknown" : retried;
-      } catch (retryError: unknown) {
-        if (!(retryError instanceof NoEcuResponseError)) {
-          throw retryError;
-        }
-        return "unknown";
-      }
+      return this.runAfterEcuWake(action, wakeAction);
     }
   }
 
-  private async runSteps(action: ProfileAction): Promise<boolean | undefined> {
+  /**
+   * Wakes the bus and retries `action`. On a sleeping bus the first frame of
+   * each attempt is typically the one nothing acknowledges (`tx_failed`), and
+   * a woken ECU can take a few hundred milliseconds before it answers, so the
+   * wake is repeated with a growing settle delay. A mismatch during this
+   * window may still be the ECU answering mid-wake and is retried rather than
+   * reported as a refusal.
+   */
+  private async runAfterEcuWake(
+    action: ProfileAction,
+    wakeAction: ProfileAction,
+  ): Promise<ActionRunResult> {
+    for (let attempt = 1; attempt <= ECU_WAKE_ATTEMPTS; attempt += 1) {
+      try {
+        await this.runSteps(wakeAction, { tolerateSilentBus: true });
+      } catch (wakeError: unknown) {
+        if (!isSilentBusError(wakeError)) {
+          throw wakeError;
+        }
+      }
+
+      await delay(ECU_WAKE_SETTLE_MS * attempt);
+
+      try {
+        const retried = await this.runSteps(action);
+        if (retried !== false) {
+          return retried;
+        }
+      } catch (retryError: unknown) {
+        if (!isSilentBusError(retryError)) {
+          throw retryError;
+        }
+      }
+    }
+
+    // Every attempt reached the bus, so the request may still have applied;
+    // report an unknown outcome instead of a hard failure.
+    return "unknown";
+  }
+
+  private async runSteps(
+    action: ProfileAction,
+    options: RunStepsOptions = {},
+  ): Promise<boolean | undefined> {
     const resolved = action.steps.map((step) => this.resolveStep(action, step));
     const batch = this.transport.sendRequestBatch?.bind(this.transport);
     const useBatch =
@@ -171,8 +243,8 @@ export class ActionController {
     for (const [groupIndex, group] of groups.entries()) {
       const verdicts =
         useBatch && group.length > 1
-          ? await this.runBatchedGroupOrFallback(action, group, batch)
-          : await this.runSequentialGroup(action, group);
+          ? await this.runBatchedGroupOrFallback(action, group, batch, options)
+          : await this.runSequentialGroup(action, group, options);
       for (const verdict of verdicts) {
         if (verdict === "mismatch") {
           return false;
@@ -197,11 +269,22 @@ export class ActionController {
   private async runSequentialGroup(
     action: ProfileAction,
     group: readonly ResolvedStep[],
+    options: RunStepsOptions,
   ): Promise<StepVerdict[]> {
     const verdicts: StepVerdict[] = [];
     for (const [index, { step, request }] of group.entries()) {
-      const payload = await this.transport.sendRequest(request);
-      const verdict = this.verifyStep(action, step, payload);
+      let verdict: StepVerdict;
+      try {
+        const payload = await this.transport.sendRequest(request);
+        verdict = this.verifyStep(action, step, payload);
+      } catch (error: unknown) {
+        if (options.tolerateSilentBus !== true || !isSilentBusError(error)) {
+          throw error;
+        }
+        // The frame was still put on the wire; nothing answered, so there is
+        // nothing to verify.
+        verdict = "unverified";
+      }
       verdicts.push(verdict);
       // Stop before transmitting further steps once one has been rejected,
       // matching the historical one-transaction-per-step behaviour.
@@ -225,12 +308,13 @@ export class ActionController {
     action: ProfileAction,
     group: readonly ResolvedStep[],
     batch: NonNullable<VehicleTransport["sendRequestBatch"]>,
+    options: RunStepsOptions,
   ): Promise<StepVerdict[]> {
     try {
-      return await this.runBatchedGroup(action, group, batch);
+      return await this.runBatchedGroup(action, group, batch, options);
     } catch (error) {
       if (error instanceof BatchUnsupportedError) {
-        return this.runSequentialGroup(action, group);
+        return this.runSequentialGroup(action, group, options);
       }
       throw error;
     }
@@ -247,11 +331,16 @@ export class ActionController {
     action: ProfileAction,
     group: readonly ResolvedStep[],
     batch: NonNullable<VehicleTransport["sendRequestBatch"]>,
+    options: RunStepsOptions,
   ): Promise<StepVerdict[]> {
     const bus = group[0]?.request.txFrame.bus;
+    const tolerateSilentBus = options.tolerateSilentBus === true;
     const response = await batch({
       signalName: action.name,
       ...(bus !== undefined ? { bus } : {}),
+      // The device normally stops at the first failed step; a wake sequence
+      // wants every frame on the wire even when the first ones go unanswered.
+      ...(tolerateSilentBus ? { continueOnError: true } : {}),
       steps: group.map(({ request }) => request),
     });
     if (response.steps.length !== group.length) {
@@ -263,7 +352,12 @@ export class ActionController {
     const verdicts: StepVerdict[] = [];
     for (const [index, { step }] of group.entries()) {
       const result = response.steps[index] as VehicleBatchStepResult;
-      const verdict = this.verifyBatchStep(action, step, result);
+      const verdict = this.verifyBatchStep(
+        action,
+        step,
+        result,
+        tolerateSilentBus,
+      );
       verdicts.push(verdict);
       if (verdict === "mismatch") {
         break;
@@ -276,13 +370,24 @@ export class ActionController {
     action: ProfileAction,
     step: RequestStep,
     result: VehicleBatchStepResult,
+    tolerateSilentBus: boolean,
   ): StepVerdict {
     switch (result.status) {
       case "ok":
         return this.verifyStep(action, step, result.payload);
       case "no_response":
+        if (tolerateSilentBus) {
+          return "unverified";
+        }
         throw new NoEcuResponseError(
           `ECU did not respond to action ${action.name}`,
+        );
+      case "tx_failed":
+        if (tolerateSilentBus) {
+          return "unverified";
+        }
+        throw new CanTransmitError(
+          `Action ${action.name} frame was not transmitted on the bus`,
         );
       case "error":
         throw new Error(

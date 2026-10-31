@@ -201,9 +201,16 @@ export class SubscriptionController {
 
   private async applyMonitorUpdate(req: Parameters<VehicleTransport["updateMonitor"]>[0]): Promise<void> {
     const response = await this.transport.updateMonitor(req);
-    if (response.status !== "ok") {
-      throw new Error(`Monitor ${req.operation} failed with status ${response.status}`);
+    if (response.status === "ok") {
+      return;
     }
+    // The device keeps its monitor list across a dropped link and across
+    // sessions that never got to clear it, so an ID it already watches is the
+    // state we wanted, not a failure.
+    if (req.operation === "add" && response.status === "duplicate_id") {
+      return;
+    }
+    throw new Error(`Monitor ${req.operation} failed with status ${response.status}`);
   }
 
   private recordFrame(signalName: string): void {

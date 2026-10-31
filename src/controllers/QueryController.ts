@@ -13,6 +13,7 @@ import {
 } from "../profile/RequestBuilder.js";
 import type { ProfileQuery, QueryDecoder } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
+import type { BusActivityMonitor } from "../vehicle/BusActivityMonitor.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -31,12 +32,15 @@ export class QueryController {
   private readonly pending = new Set<Promise<unknown>>();
   private readonly activeBySignal = new Map<string, ActiveQuerySubscription>();
   private nextSubscriptionId = 1;
+  /** Outstanding `holdPolling()` calls; subscriptions skip their ticks while any is active. */
+  private pollHolds = 0;
 
   constructor(
     private readonly state: VehicleState,
     private readonly dbc: DbcController,
     private readonly transport: VehicleTransport,
     private readonly capabilities?: CapabilityRegistry,
+    private readonly busActivity?: BusActivityMonitor,
   ) {}
 
   async requestProfile(query: ProfileQuery): Promise<unknown> {
@@ -56,6 +60,7 @@ export class QueryController {
       if (payload === undefined) {
         throw new Error(`No response payload returned for query ${query.name}`);
       }
+      this.busActivity?.recordActivity();
       assertExpectedResponse(query.expect, payload);
       const value = this.decodeProfileQuery(query, payload);
       if (this.capabilities?.hasSignal(query.name) !== true) {
@@ -64,7 +69,9 @@ export class QueryController {
       return value;
     });
 
-    void promise.catch(() => undefined);
+    void promise.catch((error: unknown) => {
+      this.busActivity?.recordRequestFailure(error);
+    });
     this.pending.add(promise);
     try {
       return await promise;
@@ -109,6 +116,21 @@ export class QueryController {
     this.pending.clear();
   }
 
+  /**
+   * Keeps polled subscriptions from sending until the matching
+   * `releasePolling()`, e.g. while an action needs the bus to itself.
+   * Explicit `requestProfile` calls are not affected.
+   */
+  holdPolling(): void {
+    this.pollHolds += 1;
+  }
+
+  releasePolling(): void {
+    if (this.pollHolds > 0) {
+      this.pollHolds -= 1;
+    }
+  }
+
   cancel(signalName: string): void {
     const active = this.activeBySignal.get(signalName);
     if (active === undefined) {
@@ -138,7 +160,11 @@ export class QueryController {
   }
 
   private poll(active: ActiveQuerySubscription): void {
-    if (active.inFlight !== undefined) {
+    if (
+      active.inFlight !== undefined ||
+      this.pollHolds > 0 ||
+      this.busActivity?.isAwake() === false
+    ) {
       return;
     }
 

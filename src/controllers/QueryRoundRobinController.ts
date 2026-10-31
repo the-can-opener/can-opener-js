@@ -1,5 +1,6 @@
 import type { QueryController } from "./QueryController.js";
 import type { ProfileQuery } from "../profile/types.js";
+import type { BusActivityMonitor } from "../vehicle/BusActivityMonitor.js";
 
 export interface QueryRoundRobinStatus {
   hzByName: Record<string, number>;
@@ -26,6 +27,8 @@ export class QueryRoundRobinController {
   private running = false;
   private stopped = false;
   private paused = false;
+  /** Outstanding `hold()` calls; the loop sends nothing while any is active. */
+  private holds = 0;
   private loopGeneration = 0;
   private cursor = 0;
   private lastQueryStartMs = 0;
@@ -33,7 +36,16 @@ export class QueryRoundRobinController {
   private readonly nextRetryAtByName = new Map<string, number>();
   private readonly pollHistoryByName = new Map<string, number[]>();
 
-  constructor(private readonly queryController: QueryController) {}
+  constructor(
+    private readonly queryController: QueryController,
+    private readonly busActivity?: BusActivityMonitor,
+  ) {
+    busActivity?.onChange((activity) => {
+      if (activity === "awake") {
+        this.handleBusAwake();
+      }
+    });
+  }
 
   update(queries: readonly ProfileQuery[]): void {
     this.stopped = true;
@@ -78,8 +90,26 @@ export class QueryRoundRobinController {
     }
 
     this.paused = false;
-    if (!this.running) {
-      void this.runLoop(this.loopGeneration);
+    this.startIfIdle();
+  }
+
+  /**
+   * Keeps the loop from starting new queries until the matching `release()`,
+   * e.g. while an action needs the bus and the transport to itself. Unlike
+   * `pause()` this is reference counted and does not disturb the caller's
+   * pause state. A query already in flight finishes normally.
+   */
+  hold(): void {
+    this.holds += 1;
+  }
+
+  release(): void {
+    if (this.holds === 0) {
+      return;
+    }
+    this.holds -= 1;
+    if (this.holds === 0) {
+      this.startIfIdle();
     }
   }
 
@@ -116,16 +146,34 @@ export class QueryRoundRobinController {
     };
   }
 
+  private canRun(generation: number): boolean {
+    return (
+      !this.stopped &&
+      !this.paused &&
+      this.holds === 0 &&
+      generation === this.loopGeneration &&
+      this.queries.length > 0 &&
+      this.busActivity?.isAwake() !== false
+    );
+  }
+
+  private startIfIdle(): void {
+    if (!this.running && this.canRun(this.loopGeneration)) {
+      void this.runLoop(this.loopGeneration);
+    }
+  }
+
+  private handleBusAwake(): void {
+    this.failureCountByName.clear();
+    this.nextRetryAtByName.clear();
+    this.startIfIdle();
+  }
+
   private async runLoop(generation: number): Promise<void> {
     this.running = true;
 
     try {
-      while (
-        !this.stopped &&
-        !this.paused &&
-        generation === this.loopGeneration &&
-        this.queries.length > 0
-      ) {
+      while (this.canRun(generation)) {
         const query = this.nextAvailableQuery();
 
         if (query === undefined) {
@@ -133,17 +181,17 @@ export class QueryRoundRobinController {
           continue;
         }
 
+        await this.waitForNextQuerySlot();
+        if (!this.canRun(generation)) {
+          break;
+        }
+
         try {
-          await this.waitForNextQuerySlot();
           await this.queryController.requestProfile(query);
           this.clearQueryFailure(query.name);
           this.recordPollSuccess(query.name);
         } catch {
           this.recordQueryFailure(query.name);
-        }
-
-        if (this.stopped || generation !== this.loopGeneration) {
-          break;
         }
       }
     } finally {

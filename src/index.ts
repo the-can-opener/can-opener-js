@@ -15,6 +15,7 @@ export * from "./profile/isotpAddressing.js";
 export * from "./profile/ProfileLoader.js";
 export * from "./profile/RequestBuilder.js";
 export * from "./profile/types.js";
+export * from "./vehicle/BusActivityMonitor.js";
 export * from "./vehicle/canBusTiming.js";
 export * from "./vehicle/VehicleState.js";
 export * from "./vehicle/VirtualVehicle.js";

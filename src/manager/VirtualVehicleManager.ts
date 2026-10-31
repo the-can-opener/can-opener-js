@@ -9,6 +9,7 @@ import { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../profile/types.js";
 import type { VehicleDisconnectOptions, VehicleTransport } from "../transport/types.js";
+import { BusActivityMonitor } from "../vehicle/BusActivityMonitor.js";
 import { configureCanBuses, type CanBusTimingReport } from "../vehicle/canBusTiming.js";
 import { VehicleState } from "../vehicle/VehicleState.js";
 import { VirtualVehicle } from "../vehicle/VirtualVehicle.js";
@@ -39,9 +40,10 @@ export class VirtualVehicleManager {
       ...profiles.flatMap((profile) => profile.dbcFiles),
     ]);
 
+    const busActivity = new BusActivityMonitor();
     const subscriptions = new SubscriptionController(state, dbc, options.transport);
-    const queries = new QueryController(state, dbc, options.transport, capabilities);
-    const queryRoundRobin = new QueryRoundRobinController(queries);
+    const queries = new QueryController(state, dbc, options.transport, capabilities, busActivity);
+    const queryRoundRobin = new QueryRoundRobinController(queries, busActivity);
     const actions = new ActionController(dbc, options.transport, capabilities);
 
     await options.transport.connect();
@@ -54,6 +56,9 @@ export class VirtualVehicleManager {
     }
 
     const disposeFrames = options.transport.onMonitorSnapshot((snapshot) => {
+      if (snapshot.frames.length > 0) {
+        busActivity.recordActivity();
+      }
       for (const frame of snapshot.frames) {
         subscriptions.handleFrame(frame);
       }
@@ -63,6 +68,7 @@ export class VirtualVehicleManager {
       subscriptions,
       queries,
       queryRoundRobin,
+      busActivity,
       actions,
       capabilities,
       disposeFrames,

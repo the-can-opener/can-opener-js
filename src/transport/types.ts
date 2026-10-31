@@ -149,6 +149,8 @@ export type VehicleBatchStepStatus =
   | "ok"
   /** A response was expected but the ECU did not answer within the timeout. */
   | "no_response"
+  /** The device could not transmit the frame (no ACK on the bus, TX error). */
+  | "tx_failed"
   /** The device reported a transport error for this step. */
   | "error"
   /** An earlier step failed and the device never executed this one. */
