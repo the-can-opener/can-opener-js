@@ -26,6 +26,25 @@ describe("VirtualVehicle.subscribe", () => {
     expect(car.subscriptionCount()).toBe(0);
   });
 
+  it("treats a CAN ID the device already monitors as subscribed", async () => {
+    const manager = new VirtualVehicleManager();
+    const transport = new MockTransport();
+    const car = await manager.connect({
+      id: "car-a",
+      transport,
+      profiles: [testVehicleProfile],
+    });
+    // Left over on the device from a session that dropped without clearing.
+    await transport.updateMonitor({ operation: "add", canIds: [100] });
+
+    await expect(car.subscribe("ENGINE_RPM")).resolves.toBe(true);
+    transport.emitFrame(car.dbc.encodeSignal("ENGINE_RPM", 900));
+    expect(car.state.get<number>("ENGINE_RPM")).toBe(900);
+
+    await car.unsubscribe("ENGINE_RPM");
+    expect(transport.monitorCanIds.size).toBe(0);
+  });
+
   it("merges keyword subscriptions that share one CAN frame", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();

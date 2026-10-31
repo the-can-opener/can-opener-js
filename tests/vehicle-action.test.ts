@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanFrame, CanPayload } from "../src/dbc/types.js";
-import { NoEcuResponseError } from "../src/errors.js";
+import { CanTransmitError, NoEcuResponseError } from "../src/errors.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
@@ -11,10 +11,30 @@ type HornBehavior =
   | "timeout-once"
   | "timeout-always"
   | "timeout-then-invalid"
-  | "invalid-response";
+  | "invalid-response"
+  | "tx-failed-once"
+  | "tx-failed-always"
+  | "asleep-then-mismatch-then-ok";
+
+/**
+ * Drives an action to completion while the ECU wake path waits on fake
+ * timers for its settle delays.
+ */
+async function withSettleDelays<T>(promise: Promise<T>): Promise<T> {
+  let settled = false;
+  const tracked = promise.finally(() => {
+    settled = true;
+  });
+  while (!settled) {
+    await vi.advanceTimersByTimeAsync(100);
+  }
+  return tracked;
+}
 
 class ActionRetryTransport extends MockTransport {
   private hornAttempts = 0;
+  /** Set by the test to make ECU_WAKE frames go unacknowledged like on a sleeping bus. */
+  wakeFails = false;
 
   constructor(private readonly hornBehavior: HornBehavior) {
     super();
@@ -23,6 +43,9 @@ class ActionRetryTransport extends MockTransport {
   override async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
     this.requests.push(req);
     if (req.signalName === "ECU_WAKE") {
+      if (this.wakeFails) {
+        throw new CanTransmitError();
+      }
       return undefined;
     }
     if (req.signalName !== "HORN") {
@@ -45,6 +68,23 @@ class ActionRetryTransport extends MockTransport {
         return Uint8Array.from([0x00]);
       case "invalid-response":
         return Uint8Array.from([0x00]);
+      case "tx-failed-once":
+        if (this.hornAttempts === 1) {
+          throw new CanTransmitError();
+        }
+        return Uint8Array.from([0x41]);
+      case "tx-failed-always":
+        throw new CanTransmitError();
+      case "asleep-then-mismatch-then-ok":
+        // Nothing ACKs the first frame, the second is answered by an ECU that
+        // is still booting, and the third is a normal reply.
+        if (this.hornAttempts === 1) {
+          throw new CanTransmitError();
+        }
+        if (this.hornAttempts === 2) {
+          return Uint8Array.from([0x00]);
+        }
+        return Uint8Array.from([0x41]);
       default: {
         const exhaustiveBehavior: never = this.hornBehavior;
         throw new Error(`Unhandled horn behavior: ${exhaustiveBehavior}`);
@@ -138,60 +178,145 @@ actions:
     );
   });
 
-  it("wakes the ECU and retries an action after no response", async () => {
-    const manager = new VirtualVehicleManager();
-    const transport = new ActionRetryTransport("timeout-once");
-    const car = await manager.connect({
-      id: "car-a",
-      transport,
-      profiles: [wakeRetryProfile],
+  describe("ECU wake", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
     });
 
-    await expect(car.action("HORN")).resolves.toBe(true);
-    expect(transport.requests.map((request) => request.signalName)).toEqual([
-      "HORN",
-      "ECU_WAKE",
-      "HORN",
-    ]);
-    expect(transport.requests.map((request) => request.expectCanResponse)).toEqual([
-      true,
-      false,
-      true,
-    ]);
-  });
-
-  it("reports an unknown outcome when the ECU stays silent after a wake", async () => {
-    const manager = new VirtualVehicleManager();
-    const transport = new ActionRetryTransport("timeout-always");
-    const car = await manager.connect({
-      id: "car-a",
-      transport,
-      profiles: [wakeRetryProfile],
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
-    await expect(car.action("HORN")).resolves.toBe("unknown");
-    expect(transport.requests.map((request) => request.signalName)).toEqual([
-      "HORN",
-      "ECU_WAKE",
-      "HORN",
-    ]);
-  });
+    it("wakes the ECU and retries an action after no response", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("timeout-once");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
 
-  it("reports an unknown outcome when the retry after a wake is unverified", async () => {
-    const manager = new VirtualVehicleManager();
-    const transport = new ActionRetryTransport("timeout-then-invalid");
-    const car = await manager.connect({
-      id: "car-a",
-      transport,
-      profiles: [wakeRetryProfile],
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+      ]);
+      expect(transport.requests.map((request) => request.expectCanResponse)).toEqual([
+        true,
+        false,
+        true,
+      ]);
     });
 
-    await expect(car.action("HORN")).resolves.toBe("unknown");
-    expect(transport.requests.map((request) => request.signalName)).toEqual([
-      "HORN",
-      "ECU_WAKE",
-      "HORN",
-    ]);
+    it("wakes the ECU and retries when nothing on the bus acknowledged the frame", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("tx-failed-once");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+      ]);
+    });
+
+    it("keeps waking when the wake frames themselves are not acknowledged", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("tx-failed-once");
+      transport.wakeFails = true;
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+      ]);
+    });
+
+    it("waits longer between each wake attempt", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("tx-failed-always");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      const result = car.action("HORN");
+      const hornAttempts = () => transport.requests.filter((request) => request.signalName === "HORN").length;
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hornAttempts()).toBe(1);
+      // Settle delays grow by 100 ms per attempt: 100, 200, 300, 400, 500.
+      for (const [attempt, settleMs] of [100, 200, 300, 400, 500].entries()) {
+        await vi.advanceTimersByTimeAsync(settleMs - 1);
+        expect(hornAttempts()).toBe(attempt + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(hornAttempts()).toBe(attempt + 2);
+      }
+
+      await expect(result).resolves.toBe("unknown");
+      expect(hornAttempts()).toBe(6);
+    });
+
+    it("reports an unknown outcome when the ECU stays silent after every wake", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("timeout-always");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        ...Array<string[]>(5).fill(["ECU_WAKE", "HORN"]).flat(),
+      ]);
+    });
+
+    it("retries a mismatch during the wake window and succeeds once the ECU is up", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("asleep-then-mismatch-then-ok");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+      ]);
+    });
+
+    it("reports an unknown outcome when every retry after a wake is unverified", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new ActionRetryTransport("timeout-then-invalid");
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [wakeRetryProfile],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+      expect(transport.requests.filter((request) => request.signalName === "ECU_WAKE")).toHaveLength(5);
+    });
   });
 
   it("does not wake or retry when the ECU returns an unexpected response", async () => {
@@ -250,6 +375,43 @@ class BatchWakeTransport extends MockTransport {
     return super.sendRequest(req);
   }
 }
+
+/**
+ * A bus with the car off: no node acknowledges anything until a full ECU_WAKE
+ * sequence has been put on the wire, after which ECUs answer normally.
+ */
+class SleepingBusTransport extends MockTransport {
+  private awake = false;
+  private wakeFramesSent = 0;
+
+  constructor(private readonly wakeFrameCount: number) {
+    super();
+  }
+
+  override async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
+    if (this.awake) {
+      return super.sendRequest(req);
+    }
+    this.requests.push(req);
+    if (req.signalName === "ECU_WAKE") {
+      this.wakeFramesSent += 1;
+      this.awake = this.wakeFramesSent >= this.wakeFrameCount;
+    }
+    throw new CanTransmitError();
+  }
+}
+
+const sleepingBusProfile: VehicleProfileSource = {
+  ...nissanSentraProfile,
+  content: `${nissanSentraProfile.content}
+  ECU_WAKE:
+    endpoint: body
+    steps:
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - send: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+`,
+};
 
 describe("VirtualVehicle.action batching", () => {
   it("sends a multi-step action as one same-bus batch", async () => {
@@ -380,36 +542,122 @@ actions:
     expect(transport.requests[4]?.txFrame.bus).toBe(1);
   });
 
-  it("wakes the ECU and re-runs the whole batch after a step gets no response", async () => {
-    const manager = new VirtualVehicleManager();
-    const transport = new BatchWakeTransport();
-    scriptNissanHorn(transport);
-    transport.scriptPidResponse(bodyFrame([0x02, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), Uint8Array.of(0x7e));
-    const car = await manager.connect({
-      id: "car-a",
-      transport,
-      profiles: [
-        {
-          ...nissanSentraProfile,
-          content: `${nissanSentraProfile.content}
+  describe("ECU wake", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("wakes the ECU and re-runs the whole batch after a step gets no response", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new BatchWakeTransport();
+      scriptNissanHorn(transport);
+      transport.scriptPidResponse(bodyFrame([0x02, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), Uint8Array.of(0x7e));
+      const car = await manager.connect({
+        id: "car-a",
+        transport,
+        profiles: [
+          {
+            ...nissanSentraProfile,
+            content: `${nissanSentraProfile.content}
   ECU_WAKE:
     endpoint: body
     send: [0x02, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
 `,
-        },
-      ],
+          },
+        ],
+      });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+
+      expect(transport.batches.map((batch) => batch.signalName)).toEqual(["HORN", "HORN"]);
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+        "HORN",
+        "HORN",
+      ]);
     });
 
-    await expect(car.action("HORN")).resolves.toBe(true);
+    it("sends every wake frame on a sleeping bus and then retries the batch", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new SleepingBusTransport(3);
+      scriptNissanHorn(transport);
+      const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
 
-    expect(transport.batches.map((batch) => batch.signalName)).toEqual(["HORN", "HORN"]);
-    expect(transport.requests.map((request) => request.signalName)).toEqual([
-      "HORN",
-      "HORN",
-      "ECU_WAKE",
-      "HORN",
-      "HORN",
-      "HORN",
-    ]);
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+
+      expect(transport.batches.map((batch) => [batch.signalName, batch.continueOnError ?? false])).toEqual([
+        ["HORN", false],
+        ["ECU_WAKE", true],
+        ["HORN", false],
+      ]);
+      // The device stops the HORN batch at the unacknowledged first frame but
+      // keeps going through the wake sequence.
+      expect(transport.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "ECU_WAKE",
+        "ECU_WAKE",
+        "HORN",
+        "HORN",
+        "HORN",
+      ]);
+    });
+
+    it("needs more than one wake when the bus takes longer to come up", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new SleepingBusTransport(5);
+      scriptNissanHorn(transport);
+      const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+
+      expect(transport.batches.map((batch) => batch.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+        "ECU_WAKE",
+        "HORN",
+      ]);
+    });
+
+    it("reports an unknown outcome when the bus never acknowledges anything", async () => {
+      const manager = new VirtualVehicleManager();
+      const transport = new SleepingBusTransport(Number.POSITIVE_INFINITY);
+      const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+
+      expect(transport.batches.map((batch) => batch.signalName)).toEqual([
+        "HORN",
+        ...Array<string[]>(5).fill(["ECU_WAKE", "HORN"]).flat(),
+      ]);
+    });
+
+    it("sends every wake frame one at a time when the transport cannot batch", async () => {
+      const manager = new VirtualVehicleManager();
+      const mock = new SleepingBusTransport(3);
+      scriptNissanHorn(mock);
+      const car = await manager.connect({ id: "car-a", transport: withoutBatchSupport(mock), profiles: [sleepingBusProfile] });
+
+      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+
+      expect(mock.batches).toHaveLength(0);
+      expect(mock.requests.map((request) => request.signalName)).toEqual([
+        "HORN",
+        "ECU_WAKE",
+        "ECU_WAKE",
+        "ECU_WAKE",
+        "HORN",
+        "HORN",
+        "HORN",
+      ]);
+    });
   });
 });

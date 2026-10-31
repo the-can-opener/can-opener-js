@@ -28,6 +28,11 @@ import type {
   VehicleDisconnectOptions,
   VehicleTransport,
 } from "../transport/types.js";
+import type {
+  BusActivity,
+  BusActivityListener,
+  BusActivityMonitor,
+} from "./BusActivityMonitor.js";
 import {
   configureCanBuses,
   mergeCanBusTimingReports,
@@ -39,6 +44,7 @@ export interface VirtualVehicleInternals {
   subscriptions: SubscriptionController;
   queries: QueryController;
   queryRoundRobin: QueryRoundRobinController;
+  busActivity: BusActivityMonitor;
   actions: ActionController;
   capabilities: CapabilityRegistry;
   disposeFrames: () => void;
@@ -175,6 +181,23 @@ export class VirtualVehicle {
     return this.internals.subscriptions.refreshStatus();
   }
 
+  /**
+   * Whether the bus looks awake. While it is `asleep` the query round-robin
+   * and query subscriptions send nothing; they resume on the next received
+   * CAN traffic, ECU reply, successful action, or `wakeBus()`.
+   */
+  busActivity(): BusActivity {
+    return this.internals.busActivity.state();
+  }
+
+  onBusActivityChange(listener: BusActivityListener): () => void {
+    return this.internals.busActivity.onChange(listener);
+  }
+
+  wakeBus(): void {
+    this.internals.busActivity.wake();
+  }
+
   async action(actionName: string): Promise<ActionRunResult>;
   async action(signalName: string, opts: ActionOptions): Promise<void>;
   async action(name: string, opts?: ActionOptions): Promise<ActionRunResult | void> {
@@ -184,9 +207,25 @@ export class VirtualVehicle {
           `Profile action ${name} does not accept raw frame action options`,
         );
       }
-      return await this.internals.actions.run(
-        this.internals.capabilities.resolveAction(name),
-      );
+      // Background queries would otherwise queue up on the transport and the
+      // device ahead of each step and retry, and on a half-awake bus every
+      // one of them waits out its full timeout first.
+      this.internals.queryRoundRobin.hold();
+      this.internals.queries.holdPolling();
+      try {
+        const wakeFirst = this.internals.busActivity.isAwake() === false;
+        const result = await this.internals.actions.run(
+          this.internals.capabilities.resolveAction(name),
+          { wakeFirst },
+        );
+        if (result === true || result === undefined) {
+          this.internals.busActivity.recordActivity();
+        }
+        return result;
+      } finally {
+        this.internals.queries.releasePolling();
+        this.internals.queryRoundRobin.release();
+      }
     }
 
     if (opts === undefined) {
@@ -273,6 +312,7 @@ export class VirtualVehicle {
     this.internals.queryRoundRobin.clear();
     this.internals.queries.clearPending();
     this.internals.actions.clearScheduled();
+    this.internals.busActivity.clearListeners();
     this.internals.disposeFrames();
     await this.transport.disconnect(options);
   }

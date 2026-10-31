@@ -31,6 +31,7 @@ export class MockTransport implements VehicleTransport {
   private readonly busConfigResponses = new Map<number, CanBusConfigResponse>();
   private readonly callbacks = new Set<SnapshotCallback>();
   private readonly pidResponses = new Map<string, CanPayload>();
+  private readonly pidErrors = new Map<string, Error>();
   private readonly monitorCanIdsByBus = new Map<number, Set<number>>();
   private readonly monitorFrames = new Map<string, CanFrame>();
   private connected = false;
@@ -81,7 +82,13 @@ export class MockTransport implements VehicleTransport {
       return undefined;
     }
 
-    const response = this.pidResponses.get(frameKey(req.txFrame));
+    const key = frameKey(req.txFrame);
+    const error = this.pidErrors.get(key);
+    if (error !== undefined) {
+      throw error;
+    }
+
+    const response = this.pidResponses.get(key);
     if (response === undefined) {
       throw new Error(
         `No mock response registered for CAN${normalizeBus(req.txFrame.bus)} ID ${req.txFrame.canId}`,
@@ -200,11 +207,21 @@ export class MockTransport implements VehicleTransport {
   }
 
   scriptPidResponse(frame: CanFrame, payload: CanPayload): void {
-    this.pidResponses.set(frameKey(frame), payload.slice());
+    const key = frameKey(frame);
+    this.pidErrors.delete(key);
+    this.pidResponses.set(key, payload.slice());
+  }
+
+  /** Makes requests for `frame` reject with `error`, e.g. `NoEcuResponseError` for a sleeping bus. */
+  scriptPidError(frame: CanFrame, error: Error): void {
+    const key = frameKey(frame);
+    this.pidResponses.delete(key);
+    this.pidErrors.set(key, error);
   }
 
   clearPidResponses(): void {
     this.pidResponses.clear();
+    this.pidErrors.clear();
   }
 
   emitFrame(frame: CanFrame): void {

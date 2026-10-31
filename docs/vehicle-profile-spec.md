@@ -742,8 +742,20 @@ an earlier payload did not match. Use `batch: false` when each response must
 gate the next transmission.
 
 `ECU_WAKE` is a reserved recovery action. When another action gets no ECU
-response, the library runs `ECU_WAKE` and retries the original action once.
-It does not retry an unexpected response payload.
+response, or no node acknowledges its frame (the bus is asleep), the library
+runs `ECU_WAKE` and retries the original action. If background queries have
+already established that the bus is asleep, the library starts with
+`ECU_WAKE` instead of first paying for an action request that is expected to
+fail. A woken ECU can take a moment to answer, so this is repeated up to five
+times with a short, growing settle delay (100 ms, 200 ms, ... 500 ms); each
+retry also waits out the step's `timeout_ms`, so a ready ECU is found quickly
+without long blind waits.
+`ECU_WAKE` frames themselves are expected to go
+unanswered on a sleeping bus: they are sent with `continueOnError` and their
+own `no_response` / `tx_failed` outcomes are ignored. A mismatching response
+during a retry may be the ECU answering mid-wake and is retried too; if no
+attempt is verified the action resolves to `"unknown"`. Outside the wake path
+an unexpected response payload is never retried.
 
 ## 15. VehicleTransport contract
 
