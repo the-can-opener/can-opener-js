@@ -1,16 +1,34 @@
 import type { DbcController } from "../dbc/DbcController.js";
-import type { CanFrame, ActionOptions, CanPayload, VehicleSignal } from "../dbc/types.js";
+import type {
+  CanFrame,
+  ActionOptions,
+  CanPayload,
+  VehicleSignal,
+} from "../dbc/types.js";
 import { BatchUnsupportedError, NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { isotpAddressingFields } from "../profile/isotpAddressing.js";
-import { assertExpectedResponse, buildStepFrame, canFdRequestFields, responseBounds } from "../profile/RequestBuilder.js";
-import type { ActionRunResult, ProfileAction, RequestStep } from "../profile/types.js";
-import type { VehicleBatchStep, VehicleBatchStepResult, VehicleTransport } from "../transport/types.js";
+import {
+  assertExpectedResponse,
+  buildStepFrame,
+  canFdRequestFields,
+  responseBounds,
+} from "../profile/RequestBuilder.js";
+import type {
+  ActionRunResult,
+  ProfileAction,
+  RequestStep,
+} from "../profile/types.js";
+import type {
+  VehicleBatchStep,
+  VehicleBatchStepResult,
+  VehicleTransport,
+} from "../transport/types.js";
 
 type Timer = ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
 const ECU_WAKE_ACTION = "ECU_WAKE";
 /** Used when a step omits `delay_ms`. Set `delay_ms: 0` to send the next frame immediately. */
-const DEFAULT_STEP_DELAY_MS = 20;
+const DEFAULT_STEP_DELAY_MS = 0;
 
 function stepDelayMs(step: RequestStep): number {
   return step.delayMs ?? DEFAULT_STEP_DELAY_MS;
@@ -59,7 +77,10 @@ export class ActionController {
   ) {}
 
   async send(signal: VehicleSignal, opts: ActionOptions): Promise<void> {
-    const frame = this.applyMask(this.dbc.encodeSignal(signal.name, opts.value), opts);
+    const frame = this.applyMask(
+      this.dbc.encodeSignal(signal.name, opts.value),
+      opts,
+    );
     await this.transport.sendRequest({
       signalName: signal.name,
       txFrame: frame,
@@ -67,7 +88,11 @@ export class ActionController {
       action: opts,
     });
 
-    if (opts.frequencyHz === undefined || opts.durationMs === undefined || opts.durationMs <= 0) {
+    if (
+      opts.frequencyHz === undefined ||
+      opts.durationMs === undefined ||
+      opts.durationMs <= 0
+    ) {
       return;
     }
 
@@ -105,7 +130,10 @@ export class ActionController {
     try {
       return await this.runSteps(action);
     } catch (error: unknown) {
-      if (!(error instanceof NoEcuResponseError) || action.name === ECU_WAKE_ACTION) {
+      if (
+        !(error instanceof NoEcuResponseError) ||
+        action.name === ECU_WAKE_ACTION
+      ) {
         throw error;
       }
 
@@ -133,14 +161,18 @@ export class ActionController {
   private async runSteps(action: ProfileAction): Promise<boolean | undefined> {
     const resolved = action.steps.map((step) => this.resolveStep(action, step));
     const batch = this.transport.sendRequestBatch?.bind(this.transport);
-    const useBatch = batch !== undefined && action.batch !== false && resolved.length > 1;
+    const useBatch =
+      batch !== undefined && action.batch !== false && resolved.length > 1;
 
     let verified = false;
-    const groups = useBatch ? groupStepsByBus(resolved) : resolved.map((step) => [step]);
+    const groups = useBatch
+      ? groupStepsByBus(resolved)
+      : resolved.map((step) => [step]);
     for (const [groupIndex, group] of groups.entries()) {
-      const verdicts = useBatch && group.length > 1
-        ? await this.runBatchedGroupOrFallback(action, group, batch)
-        : await this.runSequentialGroup(action, group);
+      const verdicts =
+        useBatch && group.length > 1
+          ? await this.runBatchedGroupOrFallback(action, group, batch)
+          : await this.runSequentialGroup(action, group);
       for (const verdict of verdicts) {
         if (verdict === "mismatch") {
           return false;
@@ -162,7 +194,10 @@ export class ActionController {
     return verified ? true : undefined;
   }
 
-  private async runSequentialGroup(action: ProfileAction, group: readonly ResolvedStep[]): Promise<StepVerdict[]> {
+  private async runSequentialGroup(
+    action: ProfileAction,
+    group: readonly ResolvedStep[],
+  ): Promise<StepVerdict[]> {
     const verdicts: StepVerdict[] = [];
     for (const [index, { step, request }] of group.entries()) {
       const payload = await this.transport.sendRequest(request);
@@ -237,31 +272,49 @@ export class ActionController {
     return verdicts;
   }
 
-  private verifyBatchStep(action: ProfileAction, step: RequestStep, result: VehicleBatchStepResult): StepVerdict {
+  private verifyBatchStep(
+    action: ProfileAction,
+    step: RequestStep,
+    result: VehicleBatchStepResult,
+  ): StepVerdict {
     switch (result.status) {
       case "ok":
         return this.verifyStep(action, step, result.payload);
       case "no_response":
-        throw new NoEcuResponseError(`ECU did not respond to action ${action.name}`);
+        throw new NoEcuResponseError(
+          `ECU did not respond to action ${action.name}`,
+        );
       case "error":
-        throw new Error(`Action ${action.name} step failed: ${result.error ?? "transport error"}`);
+        throw new Error(
+          `Action ${action.name} step failed: ${result.error ?? "transport error"}`,
+        );
       case "skipped":
         // Only reachable if the transport skipped a step without reporting the
         // failure that caused it; treat it as a transport fault.
-        throw new Error(`Action ${action.name} step was not executed by the transport`);
+        throw new Error(
+          `Action ${action.name} step was not executed by the transport`,
+        );
       default: {
         const exhaustiveStatus: never = result.status;
-        throw new Error(`Unhandled batch step status: ${String(exhaustiveStatus)}`);
+        throw new Error(
+          `Unhandled batch step status: ${String(exhaustiveStatus)}`,
+        );
       }
     }
   }
 
-  private verifyStep(action: ProfileAction, step: RequestStep, payload: CanPayload | undefined): StepVerdict {
+  private verifyStep(
+    action: ProfileAction,
+    step: RequestStep,
+    payload: CanPayload | undefined,
+  ): StepVerdict {
     if (step.expect === undefined) {
       return "unverified";
     }
     if (payload === undefined) {
-      throw new NoEcuResponseError(`ECU did not respond to action ${action.name}`);
+      throw new NoEcuResponseError(
+        `ECU did not respond to action ${action.name}`,
+      );
     }
     try {
       assertExpectedResponse(step.expect, payload);
@@ -273,14 +326,20 @@ export class ActionController {
 
   private resolveStep(action: ProfileAction, step: RequestStep): ResolvedStep {
     const endpointName = step.endpoint ?? action.endpoint;
-    const endpoint = step.requestId === undefined && endpointName !== undefined
-      ? this.resolveEndpoint(endpointName)
-      : undefined;
+    const endpoint =
+      step.requestId === undefined && endpointName !== undefined
+        ? this.resolveEndpoint(endpointName)
+        : undefined;
     if (step.requestId === undefined && endpoint === undefined) {
-      throw new Error(`Action ${action.name} step does not declare an endpoint or request_id`);
+      throw new Error(
+        `Action ${action.name} step does not declare an endpoint or request_id`,
+      );
     }
     const timeoutMs = step.timeoutMs ?? endpoint?.timeoutMs;
-    const canFd = endpoint !== undefined ? endpoint.canFd : this.capabilities?.inlineStepCanFd(step, action.name);
+    const canFd =
+      endpoint !== undefined
+        ? endpoint.canFd
+        : this.capabilities?.inlineStepCanFd(step, action.name);
     const txFrame = buildStepFrame(step, endpoint, canFd);
     return {
       step,
@@ -290,13 +349,17 @@ export class ActionController {
         ...canFdRequestFields(
           canFd,
           txFrame,
-          endpoint !== undefined ? `Endpoint ${endpoint.name}` : `Action ${action.name}`,
+          endpoint !== undefined
+            ? `Endpoint ${endpoint.name}`
+            : `Action ${action.name}`,
           endpoint?.addressing,
         ),
         ...isotpAddressingFields(endpoint),
         expectCanResponse: step.expect !== undefined,
         ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
-        ...(endpoint?.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),
+        ...(endpoint?.extended !== undefined
+          ? { responseIdExtended: endpoint.extended }
+          : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         delayAfterMs: stepDelayMs(step),
       },
@@ -316,8 +379,13 @@ export class ActionController {
     }
 
     const data = frame.data.slice();
-    const value = typeof opts.value === "boolean" ? (opts.value ? opts.mask : 0) : Number(opts.value) & opts.mask;
-    data[0] = (data[0] ?? 0) & ~opts.mask | value;
+    const value =
+      typeof opts.value === "boolean"
+        ? opts.value
+          ? opts.mask
+          : 0
+        : Number(opts.value) & opts.mask;
+    data[0] = ((data[0] ?? 0) & ~opts.mask) | value;
     return {
       ...frame,
       data,
