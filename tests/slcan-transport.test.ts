@@ -9,6 +9,7 @@ import {
   parseSlcanFrame,
   slcanBitrateCommand,
 } from "../src/transport/slcanProtocol.js";
+import { bmwExtendedAddressingProfile as bmwProfile } from "./fixtures.js";
 
 class FakeSlcanPort implements SlcanBytePort {
   readonly written: string[] = [];
@@ -416,6 +417,80 @@ describe("SlcanTransport", () => {
     expect(response.steps[0]?.status).toBe("ok");
     expect(response.steps[1]).toMatchObject({ status: "ok", responseCanId: 0x210 });
     expect(Array.from(response.steps[1]?.payload ?? [])).toEqual([0xaa]);
+    await transport.disconnect();
+  });
+});
+
+describe("SlcanTransport with ISO-TP extended addressing", () => {
+  it("queries a BMW ECU through a multi-frame reply", async () => {
+    const port = new FakeSlcanPort();
+    port.onWrite = (text) => {
+      if (text === "t6F18120322F190000000\r") {
+        port.pushRx("t6128F1101462F1903148\r");
+      } else if (text === "t6F181230000000000000\r") {
+        port.pushRx("t6128F12147434D383236\rt6128F122333341303034\rt6128F123333532000000\r");
+      }
+    };
+    const car = await new VirtualVehicleManager().connect({ id: "bmw", transport: new SlcanTransport(port), profiles: [bmwProfile] });
+
+    await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
+    expect(port.written).toContain("t6F181230000000000000\r");
+    await car.disconnect();
+  });
+
+  it("ignores a reply addressed to another tester", async () => {
+    const port = new FakeSlcanPort();
+    port.onWrite = (text) => {
+      if (text.startsWith("t6F1")) {
+        port.pushRx("t6128F20462F186020000\rt6128F10462F186010000\r");
+      }
+    };
+    const car = await new VirtualVehicleManager().connect({ id: "bmw", transport: new SlcanTransport(port), profiles: [bmwProfile] });
+
+    await expect(car.query<Uint8Array>("SESSION")).resolves.toEqual(Uint8Array.of(0x01));
+    await car.disconnect();
+  });
+
+  it("sends and receives CAN FD tx_dl 64 frames with the address byte first", async () => {
+    const port = new FakeSlcanPort();
+    const firstFrame = `b612FF11046620101${"11".repeat(58)}\r`;
+    port.onWrite = (text) => {
+      if (text.startsWith("b6F1")) {
+        port.pushRx(text.includes("1230") ? `b612FF121${"22".repeat(9)}${"00".repeat(53)}\r` : firstFrame);
+      }
+    };
+    const transport = new SlcanTransport(port, { canFd: true });
+    await transport.connect();
+    await transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 });
+
+    const payload = await transport.sendRequest({
+      txFrame: { canId: 0x6f1, dlc: 8, data: Uint8Array.of(0x12, 0x03, 0x22, 0x01, 0x01, 0, 0, 0) },
+      canFd: { txDl: 64, payload: Uint8Array.of(0x22, 0x01, 0x01) },
+      isotpAddressing: { tx: 0x12, rx: 0xf1 },
+      expectCanResponse: true,
+      responseIdStart: 0x612,
+      responseIdEnd: 0x612,
+    });
+
+    expect(port.written).toContain(`b6F1F120003220101${"00".repeat(58)}\r`);
+    expect(port.written).toContain(`b6F1F1230${"00".repeat(62)}\r`);
+    expect(payload).toHaveLength(0x46);
+    expect(Array.from(payload?.subarray(0, 3) ?? [])).toEqual([0x62, 0x01, 0x01]);
+    expect(Array.from(payload?.subarray(61) ?? [])).toEqual(Array(9).fill(0x22));
+    await transport.disconnect();
+  });
+
+  it("limits an addressed tx_dl 64 single frame to 61 payload bytes", async () => {
+    const transport = new SlcanTransport(new FakeSlcanPort(), { canFd: true });
+    await transport.connect();
+    await transport.configureBus({ bus: 0, bitrate: 500_000, dataBitrate: 2_000_000 });
+
+    await expect(transport.sendRequest({
+      txFrame: { canId: 0x6f1, dlc: 8, data: new Uint8Array(8) },
+      canFd: { txDl: 64, payload: new Uint8Array(62) },
+      isotpAddressing: { tx: 0x12, rx: 0xf1 },
+      expectCanResponse: false,
+    })).rejects.toThrow(/1 to 61 bytes/u);
     await transport.disconnect();
   });
 });

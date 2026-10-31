@@ -11,6 +11,7 @@ export * from "./dbc/types.js";
 export * from "./errors.js";
 export * from "./manager/VirtualVehicleManager.js";
 export * from "./profile/CapabilityRegistry.js";
+export * from "./profile/isotpAddressing.js";
 export * from "./profile/ProfileLoader.js";
 export * from "./profile/RequestBuilder.js";
 export * from "./profile/types.js";

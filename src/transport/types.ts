@@ -83,6 +83,19 @@ export type VehicleCanFdRequest =
     payload: CanPayload;
   };
 
+/**
+ * ISO 15765-2 extended or mixed addressing, resolved to the address byte each
+ * direction carries in front of the PCI. Extended addressing sends the target
+ * address and receives the source address; mixed addressing uses the same
+ * address extension both ways. Transports treat both the same way.
+ */
+export interface IsotpAddressBytes {
+  /** Byte 0 of every frame sent to the ECU: single, first, consecutive and flow control. */
+  tx: number;
+  /** Byte 0 the ECU puts on every frame of its reply; frames with another value are not part of the exchange. */
+  rx: number;
+}
+
 export interface VehicleRequest {
   signalName?: string;
   txFrame: CanFrame;
@@ -92,6 +105,13 @@ export interface VehicleRequest {
    * reply uses the same frame size.
    */
   canFd?: VehicleCanFdRequest;
+  /**
+   * ISO-TP extended or mixed addressing. `txFrame.data[0]` already holds `tx`
+   * and the PCI follows it. The transport requires `rx` at byte 0 of every
+   * reply frame, strips it, and sends flow control to `txFrame.canId` with
+   * `tx` first. Omitted means normal addressing: the PCI is byte 0.
+   */
+  isotpAddressing?: IsotpAddressBytes;
   expectCanResponse: boolean;
   notifyTxStatus?: boolean;
   responseIdStart?: number;

@@ -1,6 +1,7 @@
 import type { DbcController } from "../dbc/DbcController.js";
 import type { CanPayload, PollingOptions, QuerySubscriptionHandle } from "../dbc/types.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import { isotpAddressingFields } from "../profile/isotpAddressing.js";
 import { applyValueNormalization } from "../profile/normalize.js";
 import {
   alignExpectedPrefix,
@@ -45,7 +46,8 @@ export class QueryController {
     const promise = this.transport.sendRequest({
       signalName: query.name,
       txFrame: frame,
-      ...canFdRequestFields(endpoint.canFd, frame, `Endpoint ${endpoint.name}`),
+      ...canFdRequestFields(endpoint.canFd, frame, `Endpoint ${endpoint.name}`, endpoint.addressing),
+      ...isotpAddressingFields(endpoint),
       expectCanResponse: true,
       ...responseBounds(endpoint),
       ...(endpoint.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),

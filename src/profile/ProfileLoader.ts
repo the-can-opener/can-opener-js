@@ -5,6 +5,7 @@ import type {
   BuiltInDecoderRef,
   DbcDecoderRef,
   ExpectPattern,
+  IsotpAddressing,
   LoadedVehicleProfile,
   ProfileAction,
   ProfileCanBusConfig,
@@ -49,6 +50,7 @@ interface RawEndpoint {
   extended?: unknown;
   timeout_ms?: unknown;
   fd?: unknown;
+  addressing?: unknown;
 }
 
 interface RawSequence {
@@ -205,7 +207,48 @@ function normalizeEndpoint(name: string, raw: RawEndpoint): ProfileEndpoint {
     ...(raw.extended !== undefined ? { extended: readBoolean(raw.extended, `endpoints.${name}.extended`) } : {}),
     ...(raw.timeout_ms !== undefined ? { timeoutMs: readNumber(raw.timeout_ms, `endpoints.${name}.timeout_ms`) } : {}),
     ...(raw.fd !== undefined ? { fd: readEndpointFd(raw.fd, `endpoints.${name}.fd`) } : {}),
+    ...(raw.addressing !== undefined
+      ? { addressing: readIsotpAddressing(raw.addressing, `endpoints.${name}.addressing`) }
+      : {}),
   };
+}
+
+/**
+ * `addressing: { mode: extended, target_address, source_address }` or
+ * `addressing: { mode: mixed, address_extension }`. Each mode accepts only its
+ * own address fields so a profile cannot silently mix the two vocabularies.
+ */
+function readIsotpAddressing(raw: unknown, path: string): IsotpAddressing {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object with a mode`);
+  }
+  const addressing = raw as {
+    mode?: unknown;
+    target_address?: unknown;
+    source_address?: unknown;
+    address_extension?: unknown;
+  };
+  switch (addressing.mode) {
+    case "extended":
+      if (addressing.address_extension !== undefined) {
+        throw new VirtualVehicleError(`${path}.address_extension is only valid with mode mixed`);
+      }
+      return {
+        mode: "extended",
+        targetAddress: readByte(addressing.target_address, `${path}.target_address`),
+        sourceAddress: readByte(addressing.source_address, `${path}.source_address`),
+      };
+    case "mixed":
+      if (addressing.target_address !== undefined || addressing.source_address !== undefined) {
+        throw new VirtualVehicleError(`${path}.target_address and source_address are only valid with mode extended`);
+      }
+      return {
+        mode: "mixed",
+        addressExtension: readByte(addressing.address_extension, `${path}.address_extension`),
+      };
+    default:
+      throw new VirtualVehicleError(`${path}.mode must be extended or mixed`);
+  }
 }
 
 function readEndpointFd(raw: unknown, path: string): ProfileEndpointFd {

@@ -1,4 +1,5 @@
 import type { CanFrame, CanPayload } from "../dbc/types.js";
+import type { IsotpAddressBytes } from "./types.js";
 
 /** CANable speed codes. `S7` is 750 kbit/s on both CANable 1 and CANable 2 firmware. */
 const SLCAN_BITRATES: ReadonlyArray<readonly [number, string]> = [
@@ -31,6 +32,7 @@ const CLASSIC_CAN_MAX_LENGTH = 8;
 const ISOTP_SINGLE_FRAME = 0x00;
 const ISOTP_FIRST_FRAME = 0x10;
 const ISOTP_CONSECUTIVE_FRAME = 0x20;
+const ISOTP_FLOW_CONTROL_CTS = 0x30;
 const ISOTP_PENDING_NRC = 0x78;
 const ISOTP_MAX_WAIT_FRAMES = 8;
 const ISOTP_MAX_PAYLOAD_LENGTH = 4095;
@@ -144,6 +146,11 @@ export function parseSlcanFrame(line: string): CanFrame | undefined {
  * Reassembles one ISO-TP response the way Can Opener firmware does: PCI bytes
  * are removed, a standard-id flow control frame goes to `responseId - 8`, and
  * `7F xx 78` response-pending replies keep the exchange open.
+ *
+ * With `addressing`, every frame of the exchange carries an address byte in
+ * front of the PCI (ISO 15765-2 extended or mixed addressing). Reply frames
+ * whose first byte is not `addressing.rx` belong to another exchange and are
+ * ignored, and flow control goes to the request ID with `addressing.tx` first.
  */
 export class IsotpReassembly {
   private mode: "header" | "consecutive" = "header";
@@ -154,6 +161,8 @@ export class IsotpReassembly {
   private responseCanId = 0;
   private responseExtended = false;
   private pendingResponses = 0;
+  /** Index of the PCI byte: 1 after an address byte, otherwise 0. */
+  private readonly pciOffset: number;
 
   constructor(
     private readonly requestCanId: number,
@@ -161,18 +170,21 @@ export class IsotpReassembly {
     private readonly responseIdStart: number,
     private readonly responseIdEnd: number,
     private readonly responseExtendedRange: boolean,
-  ) {}
+    private readonly addressing?: IsotpAddressBytes,
+  ) {
+    this.pciOffset = addressing === undefined ? 0 : 1;
+  }
 
   push(frame: CanFrame): IsotpStep {
     if (this.mode === "header") {
-      if (!this.matchesRange(frame)) {
+      if (!this.matchesRange(frame) || !this.matchesAddress(frame)) {
         return { type: "ignore" };
       }
       return this.pushHeader(frame);
     }
 
     const extended = frame.extended === true;
-    if (extended !== this.responseExtended || frame.canId !== this.responseCanId) {
+    if (extended !== this.responseExtended || frame.canId !== this.responseCanId || !this.matchesAddress(frame)) {
       return { type: "ignore" };
     }
     return this.pushConsecutive(frame);
@@ -181,37 +193,40 @@ export class IsotpReassembly {
   private pushHeader(frame: CanFrame): IsotpStep {
     const data = frame.data;
     const dlc = frame.dlc ?? data.length;
-    if (dlc === 0 || data.length === 0) {
+    const pciIndex = this.pciOffset;
+    if (dlc <= pciIndex || data.length <= pciIndex) {
       return { type: "invalid", message: "ISO-TP response frame was empty" };
     }
 
-    const pci = data[0] ?? 0;
+    const pci = data[pciIndex] ?? 0;
     const pciType = pci & 0xf0;
     if (pciType === ISOTP_SINGLE_FRAME) {
       // ISO 15765-2:2016: a frame longer than 8 bytes carries the length in
-      // byte 1 after a zero low nibble.
+      // the byte after the PCI, whose low nibble is zero.
       const escaped = dlc > CLASSIC_CAN_MAX_LENGTH;
       const pciLength = escaped ? 2 : 1;
-      const length = escaped ? (data[1] ?? 0) : pci & 0x0f;
-      if ((escaped && (pci & 0x0f) !== 0) || length > dlc - pciLength) {
+      const length = escaped ? (data[pciIndex + 1] ?? 0) : pci & 0x0f;
+      const payloadStart = pciIndex + pciLength;
+      if ((escaped && (pci & 0x0f) !== 0) || length > dlc - payloadStart) {
         return { type: "invalid", message: "ISO-TP single frame length exceeds the CAN frame" };
       }
-      return this.finish(data.slice(pciLength, pciLength + length));
+      return this.finish(data.slice(payloadStart, payloadStart + length));
     }
 
-    if (pciType !== ISOTP_FIRST_FRAME || dlc < 2) {
+    if (pciType !== ISOTP_FIRST_FRAME || dlc < pciIndex + 2) {
       return { type: "invalid", message: `Unexpected ISO-TP PCI 0x${pci.toString(16)}` };
     }
 
-    const lengthHigh = data[1] ?? 0;
+    const lengthHigh = data[pciIndex + 1] ?? 0;
     const totalLength = ((pci & 0x0f) << 8) | lengthHigh;
     if (totalLength === 0 || totalLength > ISOTP_MAX_PAYLOAD_LENGTH) {
       return { type: "invalid", message: `ISO-TP length ${totalLength} is out of range` };
     }
 
-    const firstLength = Math.min(dlc - 2, totalLength);
+    const firstStart = pciIndex + 2;
+    const firstLength = Math.min(dlc - firstStart, totalLength);
     this.payload = new Uint8Array(totalLength);
-    this.payload.set(data.subarray(2, 2 + firstLength));
+    this.payload.set(data.subarray(firstStart, firstStart + firstLength));
     this.totalLength = totalLength;
     this.copiedLength = firstLength;
     this.expectedSequence = 1;
@@ -219,7 +234,9 @@ export class IsotpReassembly {
     this.responseExtended = frame.extended === true;
     this.mode = "consecutive";
 
-    if (!this.responseExtended) {
+    // An addressed ECU listens on the request ID and picks the exchange by the
+    // address byte, so the OBD `response - 8` convention does not apply.
+    if (!this.responseExtended && this.addressing === undefined) {
       if (frame.canId < 8) {
         return { type: "invalid", message: "ISO-TP response ID is too small for flow control" };
       }
@@ -236,20 +253,22 @@ export class IsotpReassembly {
   private pushConsecutive(frame: CanFrame): IsotpStep {
     const data = frame.data;
     const dlc = frame.dlc ?? data.length;
-    if (dlc === 0 || data.length === 0) {
+    const pciIndex = this.pciOffset;
+    if (dlc <= pciIndex || data.length <= pciIndex) {
       return { type: "ignore" };
     }
 
-    const pci = data[0] ?? 0;
+    const pci = data[pciIndex] ?? 0;
     const pciType = pci & 0xf0;
     const sequence = pci & 0x0f;
     if (pciType !== ISOTP_CONSECUTIVE_FRAME || sequence !== this.expectedSequence) {
       return { type: "ignore" };
     }
 
+    const dataStart = pciIndex + 1;
     const remaining = this.totalLength - this.copiedLength;
-    const chunkLength = Math.min(dlc - 1, remaining);
-    this.payload.set(data.subarray(1, 1 + chunkLength), this.copiedLength);
+    const chunkLength = Math.min(dlc - dataStart, remaining);
+    this.payload.set(data.subarray(dataStart, dataStart + chunkLength), this.copiedLength);
     this.copiedLength += chunkLength;
     this.expectedSequence = (this.expectedSequence + 1) & 0x0f;
 
@@ -280,6 +299,24 @@ export class IsotpReassembly {
     }
     return frame.canId >= this.responseIdStart && frame.canId <= this.responseIdEnd;
   }
+
+  private matchesAddress(frame: CanFrame): boolean {
+    return this.addressing === undefined || frame.data[0] === this.addressing.rx;
+  }
+}
+
+/**
+ * An ISO-TP flow control frame (CTS, no block size, no separation time) of
+ * `length` bytes, with the address byte first when the exchange is addressed.
+ */
+export function isotpFlowControlFrame(length: number, addressing?: IsotpAddressBytes): Uint8Array {
+  const data = new Uint8Array(length);
+  let index = 0;
+  if (addressing !== undefined) {
+    data[index++] = addressing.tx;
+  }
+  data[index] = ISOTP_FLOW_CONTROL_CTS;
+  return data;
 }
 
 function frameLength(frame: CanFrame): number {

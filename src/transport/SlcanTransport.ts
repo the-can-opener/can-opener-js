@@ -2,6 +2,7 @@ import type { CanFrame, CanPayload } from "../dbc/types.js";
 import { NoEcuResponseError } from "../errors.js";
 import {
   encodeSlcanDataFrame,
+  isotpFlowControlFrame,
   IsotpReassembly,
   parseSlcanFrame,
   slcanBitrateCommand,
@@ -27,7 +28,6 @@ const MAX_MONITOR_IDS = 16;
 const DEFAULT_BITRATE = 500_000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 1000;
 const CLASSIC_FRAME_LENGTH = 8;
-const ISOTP_FLOW_CONTROL_CTS = 0x30;
 /** A 64-byte CAN FD single frame spends two bytes on the escaped PCI. */
 const CAN_FD_SINGLE_FRAME_MAX_PAYLOAD = 62;
 
@@ -264,13 +264,19 @@ export class SlcanTransport implements VehicleTransport {
       responseIdStart,
       responseIdEnd,
       req.responseIdExtended === true,
+      req.isotpAddressing,
     );
     const deadline = Date.now() + (req.timeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS);
     this.queuedFrames.length = 0;
     this.acceptingFrames = true;
     try {
       await this.writeText(encodeSlcanDataFrame(txFrame, format));
-      return await this.collectResponse(reassembly, deadline, format, req.canFd?.txDl ?? CLASSIC_FRAME_LENGTH);
+      return await this.collectResponse(
+        reassembly,
+        deadline,
+        format,
+        isotpFlowControlFrame(req.canFd?.txDl ?? CLASSIC_FRAME_LENGTH, req.isotpAddressing),
+      );
     } finally {
       this.acceptingFrames = false;
       this.queuedFrames.length = 0;
@@ -282,7 +288,7 @@ export class SlcanTransport implements VehicleTransport {
     reassembly: IsotpReassembly,
     deadline: number,
     format: SlcanFrameFormat,
-    flowControlLength: number,
+    flowControl: Uint8Array,
   ): Promise<CanPayload> {
     for (;;) {
       const frame = await this.nextFrame(deadline);
@@ -301,11 +307,9 @@ export class SlcanTransport implements VehicleTransport {
         return step.payload;
       }
 
-      const flowControl = new Uint8Array(flowControlLength);
-      flowControl[0] = ISOTP_FLOW_CONTROL_CTS;
       await this.writeText(encodeSlcanDataFrame({
         canId: step.canId,
-        dlc: flowControlLength,
+        dlc: flowControl.length,
         data: flowControl,
         bus: 0,
         ...(step.extended ? { extended: true } : {}),
@@ -534,11 +538,12 @@ function distinctDataBitrate(bitrate: number, dataBitrate: number | undefined): 
 
 /**
  * The frame a request puts on the wire. A CAN FD request with `txDl` 64 is one
- * escaped single frame (`00 len payload`) padded to 64 bytes; SLCAN does not
- * send multi-frame requests.
+ * escaped single frame (`00 len payload`, after the address byte when the
+ * exchange is addressed) padded to 64 bytes; SLCAN does not send multi-frame
+ * requests.
  */
 function requestFrame(req: VehicleRequest): CanFrame {
-  const { canFd, txFrame } = req;
+  const { canFd, txFrame, isotpAddressing } = req;
   if (canFd === undefined) {
     return txFrame;
   }
@@ -547,15 +552,21 @@ function requestFrame(req: VehicleRequest): CanFrame {
     case 8:
       data.set(txFrame.data.subarray(0, CLASSIC_FRAME_LENGTH));
       break;
-    case 64:
-      if (canFd.payload.length === 0 || canFd.payload.length > CAN_FD_SINGLE_FRAME_MAX_PAYLOAD) {
+    case 64: {
+      const pciOffset = isotpAddressing === undefined ? 0 : 1;
+      const maxPayload = CAN_FD_SINGLE_FRAME_MAX_PAYLOAD - pciOffset;
+      if (canFd.payload.length === 0 || canFd.payload.length > maxPayload) {
         throw new Error(
-          `SLCAN sends a CAN FD request as one single frame of 1 to ${CAN_FD_SINGLE_FRAME_MAX_PAYLOAD} bytes, received ${canFd.payload.length}`,
+          `SLCAN sends a CAN FD request as one single frame of 1 to ${maxPayload} bytes, received ${canFd.payload.length}`,
         );
       }
-      data[1] = canFd.payload.length;
-      data.set(canFd.payload, 2);
+      if (isotpAddressing !== undefined) {
+        data[0] = isotpAddressing.tx;
+      }
+      data[pciOffset + 1] = canFd.payload.length;
+      data.set(canFd.payload, pciOffset + 2);
       break;
+    }
     default: {
       const unsupported: never = canFd;
       throw new Error(`Unsupported CAN FD request ${String(unsupported)}`);

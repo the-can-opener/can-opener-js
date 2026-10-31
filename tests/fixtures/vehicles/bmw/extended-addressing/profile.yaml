@@ -1,0 +1,33 @@
+version: 1
+
+# BMW-style tester: every ECU listens on 0x6F1 and answers on 0x600 + its
+# address. The address byte in front of every PCI is ISO 15765-2 extended
+# addressing, not a BMW-specific transport.
+endpoints:
+  dme:
+    request_id: 0x6F1
+    response_id: 0x612
+    timeout_ms: 500
+    addressing:
+      mode: extended
+      target_address: 0x12
+      source_address: 0xF1
+
+queries:
+  VIN:
+    endpoint: dme
+    send: [0x03, 0x22, 0xF1, 0x90, 0x00, 0x00, 0x00, 0x00]
+    expect: [0x62, 0xF1, 0x90]
+    decoder: ascii
+    length: 17
+  SESSION:
+    endpoint: dme
+    send: [0x03, 0x22, 0xF1, 0x86]
+    expect: [0x62, 0xF1, 0x86]
+    decoder: bytes
+
+actions:
+  TESTER_PRESENT:
+    endpoint: dme
+    send: [0x02, 0x3E, 0x00]
+    expect: [0x7E, 0x00]
