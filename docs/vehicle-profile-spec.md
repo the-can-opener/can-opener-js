@@ -332,6 +332,8 @@ Supported fields:
 - `timeout_ms`: response timeout.
 - `fd`: frame format for this endpoint's requests, overriding the bus default.
   See section 8.1.
+- `addressing`: ISO-TP extended or mixed addressing. Omitted means normal
+  addressing. See section 8.2.
 
 The library currently reduces multiple response ranges to their lowest start
 and highest end when constructing a transport request. Do not use disjoint
@@ -426,6 +428,81 @@ The adapter's transceiver must be CAN FD capable. A classic transceiver faults
 the bus during the data phase. The Can Opener SE uses TCAN3414 transceivers,
 which support CAN FD.
 
+### 8.2 ISO-TP addressing
+
+ISO 15765-2 defines how an ISO-TP exchange names its two ends. With normal
+addressing, the default, the CAN IDs alone do that and the PCI is the first
+data byte. With extended and mixed addressing, every frame of the exchange,
+single, first, consecutive and flow control, in both directions, carries one
+address byte in front of the PCI. The two modes differ only in what that byte
+holds:
+
+- `extended`: frames sent to the ECU carry the ECU's address, `N_TA`; frames
+  the ECU sends back carry the tester's address, `N_SA`.
+- `mixed`: both directions carry the same address extension, `N_AE`.
+
+BMW diagnostics use extended addressing: every ECU listens on `0x6F1`, the
+tester is `0xF1`, and each ECU answers on `0x600` plus its own address. The
+`F1 10 ...` first byte of a BMW reply is this address byte, not a separate
+transport protocol.
+
+```yaml
+endpoints:
+  dme:                  # BMW engine ECU, address 0x12
+    request_id: 0x6F1
+    response_id: 0x612
+    addressing:
+      mode: extended
+      target_address: 0x12   # N_TA, first byte of every frame sent
+      source_address: 0xF1   # N_SA, first byte of every frame received
+
+  body:                 # mixed addressing, one extension both ways
+    request_id: 0x7A0
+    response_id: 0x7A8
+    addressing:
+      mode: mixed
+      address_extension: 0xA5
+
+queries:
+  VIN:
+    endpoint: dme
+    send: [0x03, 0x22, 0xF1, 0x90]
+    expect: [0x62, 0xF1, 0x90]
+    decoder: ascii
+    length: 17
+```
+
+Each mode accepts only its own fields; `target_address` and `source_address`
+belong to `extended`, `address_extension` to `mixed`. Every address is one
+byte.
+
+`send` and `expect` do not change. `send` is still the ISO-TP frame with its
+PCI first; the library inserts the transmit address in front of it, so the
+`VIN` query above goes out as `6F1: 12 03 22 F1 90 00 00 00`. `expect` still
+matches the application payload: the transport removes the address byte and
+the PCI from each reply frame. Reply frames whose first byte is not the
+expected receive address belong to another exchange and are ignored.
+
+The address byte takes one data byte from every frame:
+
+- a classic single frame carries 6 application bytes instead of 7, so `send`
+  may hold at most 7 bytes after the address is added (trailing zero padding
+  may be dropped);
+- a first frame carries `tx_dl - 3` and a consecutive frame `tx_dl - 2`;
+- a CAN FD `tx_dl` 64 single frame carries 61 bytes, laid out as
+  `address 00 length payload`;
+- flow control is `address 30 BS STmin`, padded to the frame size.
+
+Flow control for an addressed exchange goes to the endpoint's `request_id`
+with the transmit address first. The OBD-II convention of answering a standard
+11-bit response ID at `response_id - 8` does not apply, because an addressed
+ECU selects the exchange by the address byte, not by a private CAN ID.
+
+Normal fixed addressing, the 29-bit `0x18DAttss` scheme of OBD-II and UDS on
+CAN, needs no `addressing` field: it is normal addressing with the addresses
+encoded in the CAN ID, so declare it with a 29-bit `request_id` and
+`extended: true`.
+
 ## 9. Request bytes and ISO-TP
 
 In profile version 1, `send` contains the bytes of one classic CAN frame. It
@@ -452,10 +529,11 @@ Here `0x02` is the ISO-TP single-frame length. The transport returns the
 reassembled application payload without ISO-TP PCI bytes, so `expect` begins
 with `0x41`, not the response frame's PCI byte.
 
-Request payloads longer than one classic single frame (7 application bytes)
-are not expressible through the current profile and `VehicleRequest` API,
-including on CAN FD endpoints. Responses of any length up to the transport
-limit are reassembled.
+Request payloads longer than one classic single frame (7 application bytes,
+or 6 on an endpoint with ISO-TP extended or mixed addressing) are not
+expressible through the current profile and `VehicleRequest` API, including
+on CAN FD endpoints. Responses of any length up to the transport limit are
+reassembled.
 
 ### 9.1 Probing CAN FD vehicles
 
@@ -700,6 +778,25 @@ as classic CAN.
 `sendRequestBatch` steps may carry `canFd`. A transport whose device batches
 only 8-byte frames sends a `txDl` 64 step outside the batch or splits the batch
 around it.
+
+A request to an endpoint with ISO-TP extended or mixed addressing (section
+8.2) carries `VehicleRequest.isotpAddressing`, `{ tx, rx }`:
+
+- `txFrame.data[0]` already holds `tx` and the PCI follows it, so a classic
+  request goes out unchanged. With `canFd.txDl` 64 the transport lays the
+  frame out as `tx 00 length payload`.
+- Every reply frame must start with `rx`; the transport ignores frames that do
+  not and strips `rx` and the PCI from those that do, including consecutive
+  frames.
+- Flow control goes to `txFrame.canId` with `tx` first: `tx 30 00 00`, padded
+  to the request's frame size. The `response_id - 8` rule for 11-bit IDs does
+  not apply to addressed exchanges.
+- A transport whose device performs ISO-TP, such as Can Opener SE, passes both
+  bytes to the device rather than reimplementing this. A transport that cannot
+  do either must reject the request; it must not send the frame with normal
+  addressing.
+
+`sendRequestBatch` steps may carry `isotpAddressing` the same way.
 
 Transport responsibilities:
 

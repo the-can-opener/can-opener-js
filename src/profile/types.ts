@@ -46,6 +46,26 @@ export interface ProfileCanFdConfig {
 /** `true`: CAN FD at the bus's ISO-TP frame size. `{ txDl }`: CAN FD at that size. `false`: classic CAN. */
 export type ProfileEndpointFd = boolean | ProfileCanFdConfig;
 
+/**
+ * ISO 15765-2 addressing that puts an address byte in front of the PCI of
+ * every frame. Omitted on an endpoint means normal addressing.
+ */
+export type IsotpAddressing =
+  | {
+    /** Extended addressing: the ECU's address goes out, our address comes back (BMW `6F1`/`6xx` diagnostics). */
+    mode: "extended";
+    /** N_TA, byte 0 of every frame sent to the ECU. */
+    targetAddress: number;
+    /** N_SA, byte 0 of every frame the ECU sends back. */
+    sourceAddress: number;
+  }
+  | {
+    /** Mixed addressing: one address extension in both directions. */
+    mode: "mixed";
+    /** N_AE, byte 0 of every frame in both directions. */
+    addressExtension: number;
+  };
+
 export interface ProfileEndpoint {
   name: string;
   requestId: number;
@@ -56,6 +76,8 @@ export interface ProfileEndpoint {
   timeoutMs?: number;
   /** Frame format as declared. Omitted: the bus default (`can.buses.<n>.fd`). */
   fd?: ProfileEndpointFd;
+  /** ISO-TP extended or mixed addressing. Omitted: normal addressing. */
+  addressing?: IsotpAddressing;
 }
 
 /** An endpoint with its bus default applied, as `CapabilityRegistry` returns it. */

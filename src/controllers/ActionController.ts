@@ -2,6 +2,7 @@ import type { DbcController } from "../dbc/DbcController.js";
 import type { CanFrame, ActionOptions, CanPayload, VehicleSignal } from "../dbc/types.js";
 import { BatchUnsupportedError, NoEcuResponseError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import { isotpAddressingFields } from "../profile/isotpAddressing.js";
 import { assertExpectedResponse, buildStepFrame, canFdRequestFields, responseBounds } from "../profile/RequestBuilder.js";
 import type { ActionRunResult, ProfileAction, RequestStep } from "../profile/types.js";
 import type { VehicleBatchStep, VehicleBatchStepResult, VehicleTransport } from "../transport/types.js";
@@ -290,7 +291,9 @@ export class ActionController {
           canFd,
           txFrame,
           endpoint !== undefined ? `Endpoint ${endpoint.name}` : `Action ${action.name}`,
+          endpoint?.addressing,
         ),
+        ...isotpAddressingFields(endpoint),
         expectCanResponse: step.expect !== undefined,
         ...(endpoint !== undefined ? responseBounds(endpoint) : {}),
         ...(endpoint?.extended !== undefined ? { responseIdExtended: endpoint.extended } : {}),
