@@ -41,7 +41,7 @@ const ECU_WAKE_ACTION = "ECU_WAKE";
 const ECU_WAKE_ATTEMPTS = 5;
 const ECU_WAKE_SETTLE_MS = 100;
 /** Used when a step omits `delay_ms`. Set `delay_ms: 0` to send the next frame immediately. */
-const DEFAULT_STEP_DELAY_MS = 20;
+const DEFAULT_STEP_DELAY_MS = 0;
 
 function stepDelayMs(step: RequestStep): number {
   return step.delayMs ?? DEFAULT_STEP_DELAY_MS;
