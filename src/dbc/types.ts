@@ -38,6 +38,8 @@ export interface VehicleSignal {
   signed?: boolean;
   scale?: number;
   offset?: number;
+  minimum?: number;
+  maximum?: number;
   unit?: string;
   valueType?: SignalValueType;
   enumValues?: Record<number, string>;

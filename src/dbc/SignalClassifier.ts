@@ -101,6 +101,8 @@ export class SignalClassifier {
       signed: rawSignal.signed,
       scale: rawSignal.scale,
       offset: rawSignal.offset,
+      ...(rawSignal.minimum !== undefined ? { minimum: rawSignal.minimum } : {}),
+      ...(rawSignal.maximum !== undefined ? { maximum: rawSignal.maximum } : {}),
       ...(rawSignal.unit !== undefined ? { unit: rawSignal.unit } : {}),
       ...(valueType !== undefined ? { valueType } : {}),
       ...(enumValues !== undefined ? { enumValues } : {}),

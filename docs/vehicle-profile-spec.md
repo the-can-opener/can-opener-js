@@ -1,7 +1,10 @@
 # can-opener-js Vehicle Profile and Library Specification
 
+Profile spec version 1.1. See the [changelog](#changelog) at the end.
+
 This document defines the concepts used by `can-opener-js`: vehicle
-profiles, DBC files, capabilities, and the `VehicleTransport` boundary.
+profiles, DBC files, capabilities, and the `VehicleTransport` boundary. The
+common capability names are listed in [Vehicle Keywords](./vehicle-keywords.md).
 
 For Bluetooth packet format. See
 [Can Opener SE BLE Protocol](./can-opener-se-ble-protocol.md) when implementing
@@ -40,10 +43,13 @@ const vehicle = await manager.connect({
   profiles: profileSources,
 });
 
-await vehicle.subscribe("SPEED");
+await vehicle.subscribe(["SPEED", "TRUNK"]);
 const speed = vehicle.state.get<number>("SPEED");
 const rpm = await vehicle.query("RPM");
-await vehicle.action("LOCK");
+await vehicle.action("HORN");                        // trigger
+await vehicle.action("DOORS", { value: "lock" });    // present-tense command
+vehicle.state.get<string>("DOORS");                  // "lock" (the declared value)
+vehicle.state.get<string>("TRUNK");                  // "open" | "closed"
 ```
 
 Each connected vehicle has isolated profiles, DBC mappings, subscriptions,
@@ -51,77 +57,88 @@ state, and transport.
 
 ## 3. Capability names
 
-Profiles should use these common names when the capability has the stated
-meaning. A profile may add vehicle-specific names for capabilities that are
-not listed.
+Profiles should use the common names below when a capability has the stated
+meaning, so that an application written against one profile works with the
+next. A profile may add vehicle-specific names for anything not listed.
 
-Common actions:
+### 3.1 Naming convention
 
-- `UNLOCK`
-- `LOCK`
-- `LEFT_SIGNAL`
-- `RIGHT_SIGNAL`
-- `OPEN_TRUNK`
-- `CLOSE_TRUNK`
-- `HORN`
-- `ECU_WAKE`
+The convention follows the model of COVESA VSS, the vocabulary behind the W3C
+VISS protocol, written in the flat `SCREAMING_SNAKE` form that DBC files and
+profiles already use.
 
-Common monitored signals:
+- A name identifies a thing on the vehicle, an *entity*: `TRUNK`,
+  `FRONT_LEFT_DOOR`, `LOW_BEAMS`. It is never a predicate or a verb, so not
+  `TRUNK_OPEN`, `OPEN_TRUNK`, or `IS_TRUNK_OPEN`.
+- One keyword covers every way a profile touches the entity. The same
+  `LEFT_SIGNAL` may be declared under `signals` (the indicator state the body
+  module broadcasts), `queries`, and `actions` (driving the indicator), and a
+  profile declares whichever its vehicle supports. Reported values and action
+  commands use the vocabularies in section 3.2. After `subscribe("TRUNK")`,
+  `state.get("TRUNK")` is `"open"` or `"closed"`;
+  `action("TRUNK", { value: "close" })` records `"close"` until a signal or
+  query reports the resulting condition.
+- Position prefixes are `FRONT_`/`REAR_` and `LEFT_`/`RIGHT_`, as seen from
+  the driver's seat facing forward. They are physical sides, not
+  driver/passenger, because DBC signals are physical. Place them before the
+  entity: `FRONT_LEFT_DOOR`, `REAR_RIGHT_WINDOW`.
+- An action takes one of two forms. With `values` it runs one present-tense
+  command per value, such as `lock` or `close` (section 14). Without
+  `values` it is a *trigger*, a momentary routine such as `HORN` with nothing
+  to set back. A trigger that shares an entity's name pulses that entity:
+  `LEFT_SIGNAL` as a trigger flashes the indicator once. A profile for a
+  vehicle whose body module latches the indicator declares
+  `LEFT_SIGNAL: { values: { on, off } }` instead.
+- After a value action reaches the bus, the library records the
+  profile-declared value unchanged under the entity name. It does not infer
+  that `lock` means `locked` or `close` means `closed`; applications that use
+  this naming convention may interpret those commands. A monitor or query for
+  the same entity then overwrites the command with what the vehicle reports.
 
-- `SPEED`
-- `RPM`
-- `LEFT_SIGNAL`
-- `RIGHT_SIGNAL`
-- `BRAKE_LIGHTS`
-- `FUEL_LEVEL`
-- `TPS`
-- `STEERING_ANGLE`
-- `LOW_BEAMS`
-- `HIGH_BEAMS`
-- `FRONT_LEFT_DOOR_OPEN`
-- `FRONT_RIGHT_DOOR_OPEN`
-- `REAR_LEFT_DOOR_OPEN`
-- `REAR_RIGHT_DOOR_OPEN`
+A rough VSS correspondence, for readers who know that vocabulary:
 
-Common query names:
+- `FRONT_LEFT_DOOR` = `Vehicle.Cabin.Door.Row1.DriverSide.IsOpen` (LHD)
+- `DOORS` = `Vehicle.Cabin.Door.*.IsLocked`, central locking
+- `TRUNK` = `Vehicle.Body.Trunk.Rear.IsOpen`
+- `SUNROOF` = `Vehicle.Cabin.Sunroof.Switch` / `Position`
+- `LOW_BEAMS` = `Vehicle.Body.Lights.Beam.Low.IsOn`
+- `LEFT_SIGNAL` = `Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling`
+- `HORN` = `Vehicle.Body.Horn.IsActive`
 
-- `RPM`
-- `SPEED`
-- `ECT`
-- `IAT`
-- `MAP`
-- `MAF`
-- `TPS`
-- `STFT_B1`
-- `LTFT_B1`
-- `STFT_B2`
-- `LTFT_B2`
-- `FUEL_PRESSURE`
-- `TIMING_ADVANCE`
-- `ENGINE_LOAD`
-- `RUNTIME`
-- `FUEL_LEVEL`
-- `DIST_SINCE_CLEAR`
-- `BARO`
-- `LAMBDA`
-- `O2_DATA`
-- `MODULE_VOLTAGE`
-- `OIL_TEMP`
-- `DRIVER_TORQUE_DEMAND`
-- `ACTUAL_TORQUE`
-- `FUEL_RATE`
-- `ODOMETER`
-- `VIN`
-- `MIL_STATUS`
-- `READINESS_STATUS`
+### 3.2 Value vocabularies
 
-Recommended portable values:
+- Numeric entities use the physical value and unit defined by the DBC.
+- Apertures (doors, trunk, hood, sunroof, windows, fuel door, charge port)
+  report `open` or `closed`. Their actions are `open` and `close`. An
+  aperture with a known travel also has a numeric `<ENTITY>_POSITION` entity
+  in percent, `0` closed and `100` fully open.
+- Switchable things (lights, climate, defrost, seat heaters, cruise control,
+  engine, charging) report and accept `on` or `off`. Multi-level entities
+  (wipers, seat heaters) list their own levels in the keyword registry; those
+  level names are both the reported value and the action command.
+- Locks report `locked` or `unlocked`. Their actions are `lock` and `unlock`.
+- Belts report `fastened` or `unfastened`. Mirrors report `folded` or
+  `unfolded`; their actions are `fold` and `unfold`.
+- DBC enum labels are returned when a `VAL_` entry matches, so a DBC that
+  labels a bit `0 "closed" 1 "open"` needs no further mapping.
+- `normalize.enum` translates vehicle-specific labels into the portable state
+  words.
 
-- Numeric signals use the physical value and unit defined by the DBC.
-- Light and indicator state uses `"off"` or `"on"`.
-- Door state uses `"closed"` or `"open"`.
-- DBC enum labels are returned when a `VAL_` entry matches.
-- `normalize.enum` may translate vehicle-specific labels into portable labels.
+Reported values are lowercase conditions. Action commands are lowercase
+present-tense verbs when that word differs from the condition: `close`, not
+`closed`, and `lock`, not `locked`. `open`, `on`, `off`, and level names are
+already the command, so the action uses the same word.
+
+### 3.3 Common keywords
+
+The registry of common keywords, with a description, kind, and value
+vocabulary for each, is maintained separately in
+[Vehicle Keywords](./vehicle-keywords.md). It also lists deprecated names from
+earlier profiles and a mapping from WiCAN parameter names.
+
+`ECU_WAKE` is the one reserved action: the library runs it to wake a sleeping
+bus before retrying another action (section 14). Applications do not offer it
+as a control.
 
 ## 4. Profile source
 
@@ -142,10 +159,11 @@ reload.
 
 ## 5. YAML root
 
-Only `version` is required by the parser.
+Only `version` is required by the parser. It is the profile spec version the
+profile is written against.
 
 ```yaml
-version: 1
+version: 1.1
 
 applies_to: {}
 
@@ -162,7 +180,11 @@ queries: {}
 actions: {}
 ```
 
-The current library accepts only `version: 1`.
+The current library accepts `version: 1` (spec 1.0) and `version: 1.1`. A
+profile that uses 1.1 features, such as `values` on an action, should declare
+`version: 1.1` so that a 1.0 loader rejects it instead of silently dropping
+those actions. Minor versions are backward compatible: a 1.1 loader reads a
+1.0 profile unchanged.
 
 ### 5.1 Applicability metadata
 
@@ -630,7 +652,7 @@ Passive signals map state names to monitored DBC signals:
 
 ```yaml
 signals:
-  DOOR_OPEN:
+  FRONT_LEFT_DOOR:
     monitor:
       bus: 1
       message: BODY_STATUS
@@ -641,8 +663,10 @@ signals:
         active: open
 ```
 
-The library resolves the DBC message ID, asks the transport to monitor that
-ID, decodes received frames, and updates vehicle state.
+The signal name is the portable entity (section 3); `monitor.signal` is the
+DBC's own name, which may be a predicate such as `DRIVER_DOOR_OPEN`. The
+library resolves the DBC message ID, asks the transport to monitor that ID,
+decodes received frames, and updates vehicle state under the entity name.
 
 Subscriptions are keyed by bus and CAN ID, so the same CAN ID may be used on
 both buses.
@@ -686,15 +710,93 @@ trailing null bytes.
 
 ## 14. Actions
 
-An endpoint-backed action may wait for and validate a response:
+A trigger is an action named for what it does once. An endpoint-backed
+trigger may wait for and validate a response:
 
 ```yaml
 actions:
-  LOCK:
+  HORN:
     endpoint: body
-    send: [0x04, 0x30, 0x38, 0x00, 0x01, 0, 0, 0]
-    expect: [0x70, 0x38, 0x01]
+    send: [0x04, 0x30, 0x30, 0x00, 0x01, 0, 0, 0]
+    expect: [0x70, 0x30, 0x01]
 ```
+
+A stateful entity declares `values`, one request definition per present-tense
+command. `endpoint` and `batch` on the entity are defaults for every command:
+
+```yaml
+actions:
+  DOORS:
+    endpoint: body
+    values:
+      lock:
+        send: [0x04, 0x30, 0x38, 0x00, 0x01, 0, 0, 0]
+        expect: [0x70, 0x38, 0x01]
+      unlock:
+        send: [0x04, 0x30, 0x38, 0x00, 0x02, 0, 0, 0]
+        expect: [0x70, 0x38, 0x02]
+  TRUNK:
+    endpoint: body
+    values:
+      open:
+        steps:
+          - ref: sequences.body_session_prep
+          - send: [0x04, 0x30, 0x40, 0x00, 0x01, 0, 0, 0]
+            expect: [0x70, 0x40, "*"]
+```
+
+Each value loads as an action named `ENTITY.value`, so `DOORS.lock`,
+`DOORS.unlock`, and `TRUNK.open`, with `entity` and `value` set on the
+loaded `ProfileAction`. A profile may also write that flat form directly,
+`DOORS.lock:`, which is equivalent. A name may contain at most one `.`, and
+an entity with `values` cannot also declare its own `send`, `steps`, or
+`expect`.
+
+```ts
+await vehicle.action("DOORS", { value: "lock" });  // runs DOORS.lock
+await vehicle.action("DOORS.lock");                // the same action
+vehicle.state.get("DOORS");                        // "lock"
+```
+
+`action(entity, { value })` resolves `entity.value` and rejects with
+`Unknown vehicle action: DOORS.ajar` when the profile has no such value.
+`CapabilityRegistry.actionValues("DOORS")` lists the commands a loaded profile
+offers, such as `lock` and `unlock`. When the result is not `false`, that is,
+the request was verified, request-only, or reached the bus with an unverified
+retry, the library records the declared action value unchanged in state under
+the entity name (`lock` records `lock`, and `close` records `close`). A
+monitor or query for the same entity overwrites it with the reported value. A
+`false` result leaves state alone.
+
+A numeric entity such as `CABIN_TEMP_SETPOINT` or `CHARGE_LIMIT` declares
+`encode` instead of `values`. At runtime `action(entity, { value: 22 })`
+validates `min` and `max` when present, encodes `round((value - offset) / scale)`
+into the target byte or bit range of `send`, and records the number in state:
+
+```yaml
+actions:
+  CABIN_TEMP_SETPOINT:
+    endpoint: climate
+    encode:
+      byte: 4
+      scale: 0.5
+      offset: -40
+      min: 16
+      max: 32
+      step: 0.5
+    send: [0x04, 0x2E, 0x12, 0x34, 0, 0, 0, 0]
+    expect: [0x6E, 0x12, 0x34]
+```
+
+`encode` accepts `byte` (`0`..`7`, shorthand for `start_bit: byte * 8` and
+`length: 8`) or `start_bit` (`0`..`63`) and `length` (`1`..`52`, default `8`),
+along with optional `byte_order` (`little` or `big`, default `little`),
+`signed` (default `false`), `scale` (default `1`), `offset` (default `0`), and
+input bounds `min`, `max`, and `step`. On a multi-step action, `encode` on the
+action applies to its direct `send` steps (not expanded `ref` sequence steps),
+or `encode` may be placed directly on the target step in `steps`.
+`CapabilityRegistry.actionInput("CABIN_TEMP_SETPOINT")` returns `{ min, max, step }`
+for rendering a number input. An action cannot declare both `values` and `encode`.
 
 An inline request is always request-only:
 
@@ -832,7 +934,7 @@ Library responsibilities:
 ## 16. Complete small profile
 
 ```yaml
-version: 1
+version: 1.1
 
 can:
   buses:
@@ -857,7 +959,7 @@ queries:
       signal: SPEED
 
 signals:
-  ENGINE_RPM:
+  RPM:
     monitor:
       bus: 0
       message: ENGINE_STATUS
@@ -867,3 +969,38 @@ signals:
 This profile still requires its referenced DBC files and a
 `VehicleTransport`. For Can Opener SE, implement the transport according to
 the separate BLE protocol specification.
+
+## Changelog
+
+### 1.1
+
+- Capability names follow an entity convention borrowed from COVESA VSS:
+  a name identifies a thing (`TRUNK`, `FRONT_LEFT_DOOR`), never a predicate
+  or verb. The monitor signal, query, and action for one entity share that
+  name. Reported values are conditions, and action commands are present tense
+  (`lock`, `close`) (section 3).
+- The common keyword list moved to [Vehicle Keywords](./vehicle-keywords.md),
+  with a description for each keyword, and grew to cover sunroof, windows,
+  hood, fuel door, charge port, mirrors, odometer, range, ignition, gear,
+  parking brake, tire pressure, climate, 12 V and traction batteries, and
+  charging.
+- Actions for stateful entities declare `values`, one request definition per
+  present-tense command, loading as `ENTITY.value` actions with `entity` and
+  `value` set. The flat `ENTITY.value:` key is equivalent (section 14).
+- `VirtualVehicle.action(entity, { value })` runs the matching command and
+  records that profile-declared value unchanged in vehicle state when the
+  request reached the bus. `CapabilityRegistry.actionValues(entity)` lists
+  the commands a profile offers.
+- Renamed: `FRONT_LEFT_DOOR_OPEN` and the other doors drop `_OPEN`;
+  `LOCK`/`UNLOCK` become `DOORS` with commands `lock`/`unlock`;
+  `OPEN_TRUNK`/`CLOSE_TRUNK` become `TRUNK` with commands `open`/`close`;
+  `HIGH_BEAM`/`LOW_BEAM` become `HIGH_BEAMS`/`LOW_BEAMS`. Old names are
+  listed as deprecated in the keyword registry; the library does not alias
+  them.
+- `version: 1.1` is accepted alongside `version: 1`.
+
+### 1.0
+
+- Initial specification: DBC-backed profiles, logical buses, CAN FD, ISO-TP
+  addressing, endpoints, sequences, signals, queries, actions, `ECU_WAKE`
+  retry, and the `VehicleTransport` contract.
