@@ -101,12 +101,12 @@ actions:
   DOORS:
     endpoint: body
     values:
-      locked:
+      lock:
         steps:
           - ref: sequences.body_session_prep
           - send: [0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00]
             expect: [0x70, 0x38, 0x01]
-      unlocked:
+      unlock:
         steps:
           - ref: sequences.body_session_prep
           - send: [0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00]

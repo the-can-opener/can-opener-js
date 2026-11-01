@@ -17,8 +17,9 @@ import type {
   VehicleSignalState,
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
+import { recordedActionState } from "../profile/actionState.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { ProfileLoader, actionName } from "../profile/ProfileLoader.js";
+import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type {
   ActionRunResult,
   ProfileValueNormalization,
@@ -58,15 +59,19 @@ interface ResolvedSubscriptionRequest {
   normalize?: ProfileValueNormalization;
 }
 
-/** Target value for a stateful profile entity, e.g. `{ value: "open" }` for `TRUNK`. */
+/** Command for a stateful profile entity, e.g. `{ value: "close" }` for `TRUNK` or `{ value: 22 }` for `CABIN_TEMP_SETPOINT`. */
 export interface ProfileActionTarget {
-  value: string;
+  value: string | number;
 }
 
 function isProfileActionTarget(
   opts: ProfileActionTarget | ActionOptions,
 ): opts is ProfileActionTarget {
-  return typeof opts.value === "string" && Object.keys(opts).length === 1;
+  return (
+    (typeof opts.value === "string" ||
+      (typeof opts.value === "number" && Number.isFinite(opts.value))) &&
+    Object.keys(opts).length === 1
+  );
 }
 
 export class VirtualVehicle {
@@ -209,9 +214,9 @@ export class VirtualVehicle {
     this.internals.busActivity.wake();
   }
 
-  /** Runs a profile trigger (`HORN`) or a fully named value action (`TRUNK.open`). */
+  /** Runs a profile trigger (`HORN`) or a fully named value action (`TRUNK.close`). */
   async action(actionName: string): Promise<ActionRunResult>;
-  /** Sets a profile entity to a target value: `action("TRUNK", { value: "open" })` runs `TRUNK.open`. */
+  /** Runs a present-tense command: `action("DOORS", { value: "lock" })` runs `DOORS.lock`. */
   async action(entity: string, target: ProfileActionTarget): Promise<ActionRunResult>;
   /** Encodes and sends a raw DBC frame signal; only without loaded profiles. */
   async action(signalName: string, opts: ActionOptions): Promise<void>;
@@ -225,9 +230,14 @@ export class VirtualVehicle {
           `Profile action ${name} does not accept raw frame action options`,
         );
       }
-      const action = this.internals.capabilities.resolveAction(
-        opts === undefined ? name : actionName(name, opts.value),
-      );
+      const action = opts === undefined
+        ? this.internals.capabilities.resolveAction(name)
+        : this.internals.capabilities.resolveActionTarget(name, opts.value);
+      if (opts === undefined && action.input !== undefined) {
+        throw new VirtualVehicleError(
+          `Action ${name} requires a numeric target value`,
+        );
+      }
       // Background queries would otherwise queue up on the transport and the
       // device ahead of each step and retry, and on a half-awake bus every
       // one of them waits out its full timeout first.
@@ -239,10 +249,13 @@ export class VirtualVehicle {
         if (result === true || result === undefined) {
           this.internals.busActivity.recordActivity();
         }
-        // The request reached the bus, so record the target value. A monitor
-        // or query for the same entity overwrites it with the reported state.
-        if (result !== false && action.entity !== undefined && action.value !== undefined) {
-          this.state.update(action.entity, action.value);
+        // The request reached the bus, so record the resulting condition.
+        // `lock` records `locked`. A monitor or query for the same entity
+        // overwrites it with what the vehicle reports.
+        const targetValue = opts !== undefined ? opts.value : action.value;
+        if (result !== false && action.entity !== undefined && targetValue !== undefined) {
+          const recorded = typeof targetValue === "string" ? recordedActionState(targetValue) : targetValue;
+          this.state.update(action.entity, recorded);
         }
         return result;
       } finally {

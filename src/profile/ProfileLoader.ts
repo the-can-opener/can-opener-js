@@ -1,4 +1,6 @@
 import { parse } from "yaml";
+import { signalBitPositions } from "../dbc/codec.js";
+import type { ByteOrder } from "../dbc/types.js";
 import { VirtualVehicleError } from "../errors.js";
 import type { CanFdTxDl } from "../transport/types.js";
 import type {
@@ -14,7 +16,9 @@ import type {
   ProfileEndpoint,
   ProfileEndpointFd,
   ProfileMonitorSignal,
+  ProfileNumberInput,
   ProfileQuery,
+  ProfileStepEncoding,
   ProfileValueNormalization,
   RequestStep,
   ResponseIdRange,
@@ -82,10 +86,11 @@ interface RawQuery {
 interface RawAction {
   endpoint?: unknown;
   send?: unknown;
+  encode?: unknown;
   expect?: unknown;
   batch?: unknown;
   steps?: RawStep[];
-  /** Stateful entity: one request definition per target value. */
+  /** Stateful entity: one request definition per present-tense command. */
   values?: unknown;
 }
 
@@ -95,7 +100,7 @@ interface RawAction {
  */
 export const SUPPORTED_PROFILE_VERSIONS: ReadonlySet<number> = new Set([1, 1.1]);
 
-/** Separates an entity from its target value in an action name: `TRUNK.open`. */
+/** Separates an entity from its command in an action name: `DOORS.lock`. */
 export const ACTION_VALUE_SEPARATOR = ".";
 
 export function actionName(entity: string, value: string): string {
@@ -106,6 +111,7 @@ type RawStep = {
   endpoint?: unknown;
   ref?: unknown;
   send?: unknown;
+  encode?: unknown;
   expect?: unknown;
   timeout_ms?: unknown;
   delay_ms?: unknown;
@@ -315,8 +321,8 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
 
 /**
  * One `actions.<NAME>` entry. A trigger (`HORN`) yields one action. A stateful
- * entity with `values` (`TRUNK: { values: { open, closed } }`) yields one
- * action per value, named `TRUNK.open` and `TRUNK.closed`, each carrying its
+ * entity with `values` (`TRUNK: { values: { open, close } }`) yields one
+ * action per value, named `TRUNK.open` and `TRUNK.close`, each carrying its
  * entity and value. A dotted key (`TRUNK.open:`) is the same thing written
  * flat. Placeholder entries without request bytes are skipped.
  */
@@ -332,20 +338,20 @@ function normalizeActionEntry(
     const action = normalizeAction(name, raw, sequences, `actions.${name}`);
     return action === undefined ? [] : [withEntityFromName(action)];
   }
-  if (raw.send !== undefined || raw.steps !== undefined || raw.expect !== undefined) {
-    throw new VirtualVehicleError(`actions.${name} cannot declare both values and its own send, steps, or expect`);
+  if (raw.send !== undefined || raw.steps !== undefined || raw.expect !== undefined || raw.encode !== undefined) {
+    throw new VirtualVehicleError(`actions.${name} cannot declare both values and its own send, steps, expect, or encode`);
   }
   if (name.includes(ACTION_VALUE_SEPARATOR)) {
     throw new VirtualVehicleError(`actions.${name} cannot declare values on a dotted entity name`);
   }
   if (raw.values === null || typeof raw.values !== "object" || Array.isArray(raw.values)) {
-    throw new VirtualVehicleError(`actions.${name}.values must be an object keyed by target value`);
+    throw new VirtualVehicleError(`actions.${name}.values must be an object keyed by command`);
   }
 
   return Object.entries(raw.values as Record<string, RawAction>).flatMap(([value, branch]) => {
     const path = `actions.${name}.values.${value}`;
     if (value.length === 0 || value.includes(ACTION_VALUE_SEPARATOR)) {
-      throw new VirtualVehicleError(`${path} is not a valid target value`);
+      throw new VirtualVehicleError(`${path} is not a valid command`);
     }
     if (branch === null || typeof branch !== "object") {
       throw new VirtualVehicleError(`${path} must be an object`);
@@ -353,11 +359,17 @@ function normalizeActionEntry(
     if (branch.values !== undefined) {
       throw new VirtualVehicleError(`${path} cannot nest values`);
     }
+    if (branch.encode !== undefined) {
+      throw new VirtualVehicleError(`${path} cannot declare encode`);
+    }
     const action = normalizeAction(actionName(name, value), {
       ...branch,
       ...(branch.endpoint === undefined && raw.endpoint !== undefined ? { endpoint: raw.endpoint } : {}),
       ...(branch.batch === undefined && raw.batch !== undefined ? { batch: raw.batch } : {}),
     }, sequences, path);
+    if (action?.input !== undefined) {
+      throw new VirtualVehicleError(`${path} cannot declare encode`);
+    }
     return action === undefined ? [] : [{ ...action, entity: name, value }];
   });
 }
@@ -366,6 +378,9 @@ function withEntityFromName(action: ProfileAction): ProfileAction {
   const separator = action.name.indexOf(ACTION_VALUE_SEPARATOR);
   if (separator <= 0 || separator === action.name.length - 1) {
     return action;
+  }
+  if (action.input !== undefined) {
+    throw new VirtualVehicleError(`actions.${action.name} cannot declare encode on a dotted entity name`);
   }
   const value = action.name.slice(separator + 1);
   if (value.includes(ACTION_VALUE_SEPARATOR)) {
@@ -383,21 +398,53 @@ function normalizeAction(
   const endpoint = raw.endpoint !== undefined
     ? readString(raw.endpoint, `${path}.endpoint`)
     : undefined;
+  const actionEncode = raw.encode !== undefined
+    ? readActionEncode(raw.encode, `${path}.encode`)
+    : undefined;
+  let stepInput: ProfileNumberInput | undefined;
   const steps = raw.steps !== undefined
-    ? expandSteps(raw.steps, sequences, raw.endpoint)
+    ? expandSteps(
+        raw.steps,
+        sequences,
+        raw.endpoint,
+        [],
+        actionEncode?.stepEncode,
+        (input) => {
+          stepInput = { ...input, ...stepInput };
+        },
+      )
     : raw.send !== undefined
-      ? [{
-          ...readSendStep(raw.send, `${path}.send`, endpoint),
-          ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `${path}.expect`) } : {}),
-        }]
+      ? (() => {
+          if (actionEncode !== undefined && actionEncode.stepEncode === undefined) {
+            throw new VirtualVehicleError(`${path}.encode must declare byte or start_bit`);
+          }
+          return [{
+            ...readSendStep(raw.send, `${path}.send`, endpoint),
+            ...(actionEncode?.stepEncode !== undefined ? { encode: actionEncode.stepEncode } : {}),
+            ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `${path}.expect`) } : {}),
+          }];
+        })()
       : undefined;
 
   if (steps === undefined || steps.length === 0) {
+    if (actionEncode !== undefined) {
+      throw new VirtualVehicleError(`${path}.encode requires send or steps`);
+    }
     return undefined;
   }
 
+  const hasEncodedStep = steps.some((step) => step.encode !== undefined);
+  if (actionEncode !== undefined && !hasEncodedStep) {
+    throw new VirtualVehicleError(`${path}.encode must declare byte or start_bit, or declare encode on a step`);
+  }
+
+  const input: ProfileNumberInput | undefined = hasEncodedStep
+    ? { ...stepInput, ...actionEncode?.input }
+    : undefined;
+
   return {
     name,
+    ...(input !== undefined ? { entity: name, input } : {}),
     ...(endpoint !== undefined ? { endpoint } : {}),
     ...(raw.batch !== undefined ? { batch: readBoolean(raw.batch, `${path}.batch`) } : {}),
     steps,
@@ -434,9 +481,14 @@ function expandSteps(
   sequences: Record<string, RawSequence>,
   inheritedEndpoint: unknown,
   seen: string[] = [],
+  inheritedStepEncode?: ProfileStepEncoding,
+  onStepInput?: (input: ProfileNumberInput) => void,
 ): RequestStep[] {
   return rawSteps.flatMap((step) => {
     if (step.ref !== undefined) {
+      if (step.encode !== undefined) {
+        throw new VirtualVehicleError("steps.encode cannot be declared on a ref step");
+      }
       const ref = readString(step.ref, "steps.ref").replace(/^sequences\./u, "");
       if (seen.includes(ref)) {
         throw new VirtualVehicleError(`Circular sequence reference: ${[...seen, ref].join(" -> ")}`);
@@ -451,14 +503,162 @@ function expandSteps(
     const stepEndpoint = step.endpoint !== undefined || inheritedEndpoint !== undefined
       ? readString(step.endpoint ?? inheritedEndpoint, "steps.endpoint")
       : undefined;
+    const explicitEncode = step.encode !== undefined
+      ? readStepEncode(step.encode, "steps.encode")
+      : undefined;
+    if (explicitEncode !== undefined && onStepInput !== undefined) {
+      onStepInput(explicitEncode.input);
+    }
+    const encode = explicitEncode?.stepEncode ?? (seen.length === 0 ? inheritedStepEncode : undefined);
 
     return [{
       ...readSendStep(step.send, "steps.send", stepEndpoint),
+      ...(encode !== undefined ? { encode } : {}),
       ...(step.expect !== undefined ? { expect: normalizeExpect(step.expect, "steps.expect") } : {}),
       ...(step.timeout_ms !== undefined ? { timeoutMs: readDurationMs(step.timeout_ms, "steps.timeout_ms") } : {}),
       ...(step.delay_ms !== undefined ? { delayMs: readDurationMs(step.delay_ms, "steps.delay_ms") } : {}),
     }];
   });
+}
+
+interface RawEncode {
+  byte?: unknown;
+  start_bit?: unknown;
+  length?: unknown;
+  byte_order?: unknown;
+  signed?: unknown;
+  scale?: unknown;
+  offset?: unknown;
+  min?: unknown;
+  max?: unknown;
+  step?: unknown;
+}
+
+function readActionEncode(
+  raw: unknown,
+  path: string,
+): { input: ProfileNumberInput; stepEncode?: ProfileStepEncoding } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+  const encode = raw as RawEncode;
+  const input = readNumberInput(encode, path);
+  const hasPlacementFields =
+    encode.byte !== undefined ||
+    encode.start_bit !== undefined ||
+    encode.length !== undefined ||
+    encode.byte_order !== undefined ||
+    encode.signed !== undefined ||
+    encode.scale !== undefined ||
+    encode.offset !== undefined;
+  return {
+    input,
+    ...(hasPlacementFields ? { stepEncode: readStepEncodingFields(encode, path) } : {}),
+  };
+}
+
+function readStepEncode(
+  raw: unknown,
+  path: string,
+): { input: ProfileNumberInput; stepEncode: ProfileStepEncoding } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new VirtualVehicleError(`${path} must be an object`);
+  }
+  const encode = raw as RawEncode;
+  return {
+    input: readNumberInput(encode, path),
+    stepEncode: readStepEncodingFields(encode, path),
+  };
+}
+
+function readNumberInput(encode: RawEncode, path: string): ProfileNumberInput {
+  const min = encode.min !== undefined ? readNumber(encode.min, `${path}.min`) : undefined;
+  const max = encode.max !== undefined ? readNumber(encode.max, `${path}.max`) : undefined;
+  if (min !== undefined && max !== undefined && min > max) {
+    throw new VirtualVehicleError(`${path}.min must not exceed max`);
+  }
+  const step = encode.step !== undefined ? readPositiveNumber(encode.step, `${path}.step`) : undefined;
+  return {
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+    ...(step !== undefined ? { step } : {}),
+  };
+}
+
+function readStepEncodingFields(encode: RawEncode, path: string): ProfileStepEncoding {
+  if (encode.byte !== undefined && (encode.start_bit !== undefined || encode.length !== undefined)) {
+    throw new VirtualVehicleError(`${path} cannot declare both byte and start_bit or length`);
+  }
+
+  let startBit: number;
+  let length: number;
+  if (encode.byte !== undefined) {
+    const byte = readNumber(encode.byte, `${path}.byte`);
+    if (!Number.isInteger(byte) || byte < 0 || byte > 7) {
+      throw new VirtualVehicleError(`${path}.byte must be an integer between 0 and 7`);
+    }
+    startBit = byte * 8;
+    length = 8;
+  } else if (encode.start_bit !== undefined) {
+    startBit = readNumber(encode.start_bit, `${path}.start_bit`);
+    if (!Number.isInteger(startBit) || startBit < 0 || startBit > 63) {
+      throw new VirtualVehicleError(`${path}.start_bit must be an integer between 0 and 63`);
+    }
+    length = encode.length !== undefined ? readNumber(encode.length, `${path}.length`) : 8;
+    if (!Number.isInteger(length) || length < 1 || length > 52) {
+      throw new VirtualVehicleError(`${path}.length must be an integer between 1 and 52`);
+    }
+  } else {
+    throw new VirtualVehicleError(`${path} must declare byte or start_bit`);
+  }
+
+  const byteOrder = encode.byte_order !== undefined ? readByteOrder(encode.byte_order, `${path}.byte_order`) : undefined;
+  const signed = encode.signed !== undefined ? readBoolean(encode.signed, `${path}.signed`) : undefined;
+  const scale = encode.scale !== undefined ? readNonZeroNumber(encode.scale, `${path}.scale`) : undefined;
+  const offset = encode.offset !== undefined ? readNumber(encode.offset, `${path}.offset`) : undefined;
+
+  const positions = signalBitPositions({
+    startBit,
+    length,
+    ...(byteOrder !== undefined ? { byteOrder } : {}),
+  });
+  for (const position of positions) {
+    if (position < 0 || position > 63) {
+      throw new VirtualVehicleError(`${path} exceeds 8-byte CAN frame bounds`);
+    }
+  }
+
+  return {
+    startBit,
+    length,
+    ...(byteOrder !== undefined ? { byteOrder } : {}),
+    ...(signed !== undefined ? { signed } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+  };
+}
+
+function readByteOrder(raw: unknown, path: string): ByteOrder {
+  if (raw === "little" || raw === "big") {
+    return raw;
+  }
+  throw new VirtualVehicleError(`${path} must be little or big`);
+}
+
+function readPositiveNumber(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (value <= 0) {
+    throw new VirtualVehicleError(`${path} must be a positive number`);
+  }
+  return value;
+}
+
+function readNonZeroNumber(raw: unknown, path: string): number {
+  const value = readNumber(raw, path);
+  if (value === 0) {
+    throw new VirtualVehicleError(`${path} must not be 0`);
+  }
+  return value;
 }
 
 function normalizeQueryDecoder(name: string, raw: RawQuery): DbcDecoderRef | BuiltInDecoderRef | undefined {

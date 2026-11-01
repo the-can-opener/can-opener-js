@@ -47,7 +47,8 @@ await vehicle.subscribe(["SPEED", "TRUNK"]);
 const speed = vehicle.state.get<number>("SPEED");
 const rpm = await vehicle.query("RPM");
 await vehicle.action("HORN");                        // trigger
-await vehicle.action("DOORS", { value: "locked" });  // set an entity
+await vehicle.action("DOORS", { value: "lock" });    // present-tense command
+vehicle.state.get<string>("DOORS");                  // "locked" | "unlocked"
 vehicle.state.get<string>("TRUNK");                  // "open" | "closed"
 ```
 
@@ -72,25 +73,26 @@ profiles already use.
 - One keyword covers every way a profile touches the entity. The same
   `LEFT_SIGNAL` may be declared under `signals` (the indicator state the body
   module broadcasts), `queries`, and `actions` (driving the indicator), and a
-  profile declares whichever its vehicle supports. All of them share one
-  value vocabulary (section 3.2). After `subscribe("TRUNK")`,
+  profile declares whichever its vehicle supports. Reported values and action
+  commands use the vocabularies in section 3.2. After `subscribe("TRUNK")`,
   `state.get("TRUNK")` is `"open"` or `"closed"`;
-  `action("TRUNK", { value: "open" })` asks for the same `"open"`.
+  `action("TRUNK", { value: "close" })` is the command that produces `"closed"`.
 - Position prefixes are `FRONT_`/`REAR_` and `LEFT_`/`RIGHT_`, as seen from
   the driver's seat facing forward. They are physical sides, not
   driver/passenger, because DBC signals are physical. Place them before the
   entity: `FRONT_LEFT_DOOR`, `REAR_RIGHT_WINDOW`.
-- An action takes one of two forms. With `values` it sets the entity to a
-  target value, one request definition per value (section 14). Without
+- An action takes one of two forms. With `values` it runs one present-tense
+  command per value, such as `lock` or `close` (section 14). Without
   `values` it is a *trigger*, a momentary routine such as `HORN` with nothing
   to set back. A trigger that shares an entity's name pulses that entity:
   `LEFT_SIGNAL` as a trigger flashes the indicator once. A profile for a
   vehicle whose body module latches the indicator declares
   `LEFT_SIGNAL: { values: { on, off } }` instead.
-- After a value action reaches the bus, the library records the target value
-  in state under the entity name. A monitor or query for the same entity then
-  overwrites it with what the vehicle reports. This is the VSS distinction
-  between a target and an actual value, kept under one name.
+- After a value action reaches the bus, the library records the resulting
+  condition in state under the entity name: `lock` records `locked`, and
+  `close` records `closed`. A command that already names the condition, such
+  as `open` or `on`, is recorded unchanged. A monitor or query for the same
+  entity then overwrites it with what the vehicle reports.
 
 A rough VSS correspondence, for readers who know that vocabulary:
 
@@ -105,20 +107,26 @@ A rough VSS correspondence, for readers who know that vocabulary:
 ### 3.2 Value vocabularies
 
 - Numeric entities use the physical value and unit defined by the DBC.
-- Apertures (doors, trunk, hood, sunroof, windows, fuel door, charge port):
-  `open` or `closed`. An aperture with a known travel also has a numeric
-  `<ENTITY>_POSITION` entity in percent, `0` closed and `100` fully open.
+- Apertures (doors, trunk, hood, sunroof, windows, fuel door, charge port)
+  report `open` or `closed`. Their actions are `open` and `close`. An
+  aperture with a known travel also has a numeric `<ENTITY>_POSITION` entity
+  in percent, `0` closed and `100` fully open.
 - Switchable things (lights, climate, defrost, seat heaters, cruise control,
-  engine, charging): `on` or `off`. Multi-level entities (wipers, seat
-  heaters) list their own levels in the keyword registry.
-- Locks: `locked` or `unlocked`.
-- Belts: `fastened` or `unfastened`. Mirrors: `folded` or `unfolded`.
+  engine, charging) report and accept `on` or `off`. Multi-level entities
+  (wipers, seat heaters) list their own levels in the keyword registry; those
+  level names are both the reported value and the action command.
+- Locks report `locked` or `unlocked`. Their actions are `lock` and `unlock`.
+- Belts report `fastened` or `unfastened`. Mirrors report `folded` or
+  `unfolded`; their actions are `fold` and `unfold`.
 - DBC enum labels are returned when a `VAL_` entry matches, so a DBC that
   labels a bit `0 "closed" 1 "open"` needs no further mapping.
-- `normalize.enum` translates vehicle-specific labels into the portable ones.
+- `normalize.enum` translates vehicle-specific labels into the portable state
+  words.
 
-Values are lowercase adjectives or states, never verbs, so a target and a
-reported value are the same literal: `closed`, not `close`.
+Reported values are lowercase conditions. Action commands are lowercase
+present-tense verbs when that word differs from the condition: `close`, not
+`closed`, and `lock`, not `locked`. `open`, `on`, `off`, and level names are
+already the command, so the action uses the same word.
 
 ### 3.3 Common keywords
 
@@ -712,18 +720,18 @@ actions:
     expect: [0x70, 0x30, 0x01]
 ```
 
-A stateful entity declares `values`, one request definition per target
-value. `endpoint` and `batch` on the entity are defaults for every value:
+A stateful entity declares `values`, one request definition per present-tense
+command. `endpoint` and `batch` on the entity are defaults for every command:
 
 ```yaml
 actions:
   DOORS:
     endpoint: body
     values:
-      locked:
+      lock:
         send: [0x04, 0x30, 0x38, 0x00, 0x01, 0, 0, 0]
         expect: [0x70, 0x38, 0x01]
-      unlocked:
+      unlock:
         send: [0x04, 0x30, 0x38, 0x00, 0x02, 0, 0, 0]
         expect: [0x70, 0x38, 0x02]
   TRUNK:
@@ -736,27 +744,58 @@ actions:
             expect: [0x70, 0x40, "*"]
 ```
 
-Each value loads as an action named `ENTITY.value`, so `DOORS.locked`,
-`DOORS.unlocked`, and `TRUNK.open`, with `entity` and `value` set on the
+Each value loads as an action named `ENTITY.value`, so `DOORS.lock`,
+`DOORS.unlock`, and `TRUNK.open`, with `entity` and `value` set on the
 loaded `ProfileAction`. A profile may also write that flat form directly,
-`DOORS.locked:`, which is equivalent. A name may contain at most one `.`, and
+`DOORS.lock:`, which is equivalent. A name may contain at most one `.`, and
 an entity with `values` cannot also declare its own `send`, `steps`, or
 `expect`.
 
 ```ts
-await vehicle.action("DOORS", { value: "locked" });  // runs DOORS.locked
-await vehicle.action("DOORS.locked");                 // the same action
-vehicle.state.get("DOORS");                           // "locked"
+await vehicle.action("DOORS", { value: "lock" });  // runs DOORS.lock
+await vehicle.action("DOORS.lock");                // the same action
+vehicle.state.get("DOORS");                        // "locked"
 ```
 
 `action(entity, { value })` resolves `entity.value` and rejects with
 `Unknown vehicle action: DOORS.ajar` when the profile has no such value.
-`CapabilityRegistry.actionValues("DOORS")` lists the values a loaded profile
-offers. When the result is not `false`, that is, the request was verified,
-request-only, or reached the bus with an unverified retry, the library
-records the target value in state under the entity name; a monitor or query
-for the same entity overwrites it with the reported value. A `false` result
-leaves state alone.
+`CapabilityRegistry.actionValues("DOORS")` lists the commands a loaded profile
+offers, such as `lock` and `unlock`. When the result is not `false`, that is,
+the request was verified, request-only, or reached the bus with an unverified
+retry, the library records the resulting condition in state under the entity
+name (`lock` records `locked`, `close` records `closed`, `open` records
+`open`). A monitor or query for the same entity overwrites it with the
+reported value. A `false` result leaves state alone.
+
+A numeric entity such as `CABIN_TEMP_SETPOINT` or `CHARGE_LIMIT` declares
+`encode` instead of `values`. At runtime `action(entity, { value: 22 })`
+validates `min` and `max` when present, encodes `round((value - offset) / scale)`
+into the target byte or bit range of `send`, and records the number in state:
+
+```yaml
+actions:
+  CABIN_TEMP_SETPOINT:
+    endpoint: climate
+    encode:
+      byte: 4
+      scale: 0.5
+      offset: -40
+      min: 16
+      max: 32
+      step: 0.5
+    send: [0x04, 0x2E, 0x12, 0x34, 0, 0, 0, 0]
+    expect: [0x6E, 0x12, 0x34]
+```
+
+`encode` accepts `byte` (`0`..`7`, shorthand for `start_bit: byte * 8` and
+`length: 8`) or `start_bit` (`0`..`63`) and `length` (`1`..`52`, default `8`),
+along with optional `byte_order` (`little` or `big`, default `little`),
+`signed` (default `false`), `scale` (default `1`), `offset` (default `0`), and
+input bounds `min`, `max`, and `step`. On a multi-step action, `encode` on the
+action applies to its direct `send` steps (not expanded `ref` sequence steps),
+or `encode` may be placed directly on the target step in `steps`.
+`CapabilityRegistry.actionInput("CABIN_TEMP_SETPOINT")` returns `{ min, max, step }`
+for rendering a number input. An action cannot declare both `values` and `encode`.
 
 An inline request is always request-only:
 
@@ -936,23 +975,24 @@ the separate BLE protocol specification.
 
 - Capability names follow an entity convention borrowed from COVESA VSS:
   a name identifies a thing (`TRUNK`, `FRONT_LEFT_DOOR`), never a predicate
-  or verb, and the monitor signal, query, and action for one entity share
-  the name and value vocabulary (section 3).
+  or verb. The monitor signal, query, and action for one entity share that
+  name. Reported values are conditions, and action commands are present tense
+  (`lock` records `locked`, `close` records `closed`) (section 3).
 - The common keyword list moved to [Vehicle Keywords](./vehicle-keywords.md),
   with a description for each keyword, and grew to cover sunroof, windows,
   hood, fuel door, charge port, mirrors, odometer, range, ignition, gear,
   parking brake, tire pressure, climate, 12 V and traction batteries, and
   charging.
 - Actions for stateful entities declare `values`, one request definition per
-  target value, loading as `ENTITY.value` actions with `entity` and `value`
-  set. The flat `ENTITY.value:` key is equivalent (section 14).
-- `VirtualVehicle.action(entity, { value })` runs the matching value action
-  and records the target value in vehicle state when the request reached
-  the bus. `CapabilityRegistry.actionValues(entity)` lists the values a
+  present-tense command, loading as `ENTITY.value` actions with `entity` and
+  `value` set. The flat `ENTITY.value:` key is equivalent (section 14).
+- `VirtualVehicle.action(entity, { value })` runs the matching command and
+  records the resulting condition in vehicle state when the request reached
+  the bus. `CapabilityRegistry.actionValues(entity)` lists the commands a
   profile offers.
 - Renamed: `FRONT_LEFT_DOOR_OPEN` and the other doors drop `_OPEN`;
-  `LOCK`/`UNLOCK` become `DOORS` with `locked`/`unlocked`;
-  `OPEN_TRUNK`/`CLOSE_TRUNK` become `TRUNK` with `open`/`closed`;
+  `LOCK`/`UNLOCK` become `DOORS` with commands `lock`/`unlock`;
+  `OPEN_TRUNK`/`CLOSE_TRUNK` become `TRUNK` with commands `open`/`close`;
   `HIGH_BEAM`/`LOW_BEAM` become `HIGH_BEAMS`/`LOW_BEAMS`. Old names are
   listed as deprecated in the keyword registry; the library does not alias
   them.

@@ -14,26 +14,32 @@ vehicle needs the same thing.
 
 Each keyword names an *entity*, a thing on the vehicle, never a predicate or a
 verb: `TRUNK`, not `TRUNK_OPEN` or `OPEN_TRUNK`. One keyword covers every
-way a profile touches that entity, and all of them share one value
-vocabulary. `LEFT_SIGNAL` is both the monitored indicator state and the
-action that drives the indicator; `SPEED` is both a broadcast signal and an
-OBD-II query.
+way a profile touches that entity. `LEFT_SIGNAL` is both the monitored
+indicator state and the action that drives the indicator; `SPEED` is both a
+broadcast signal and an OBD-II query.
 
 **Used as** lists the profile sections in which the keyword may be declared:
 
 - `signal`: passive monitor under `signals`, decoded from broadcast frames.
 - `query`: request and response under `queries`.
-- `action`: under `actions`. An action with `values` sets the entity to a
-  target value; an action without `values` is a trigger, a momentary routine
-  with nothing to set back. The table says which.
+- `action`: under `actions`. An action with `values` runs one present-tense
+  command per value; an action without `values` is a trigger, a momentary
+  routine with nothing to set back. The table says which.
 
 A profile declares only what its vehicle supports. A vehicle that broadcasts
 the trunk state but cannot open it declares `TRUNK` under `signals` only.
 
 Values and units:
 
-- Enumerated values are lowercase states, never verbs: `closed`, not `close`.
-  A profile uses `normalize.enum` to map the vehicle's own labels onto them.
+- Signal and query values are lowercase conditions: `closed`, `locked`,
+  `folded`, `on`. A profile uses `normalize.enum` to map the vehicle's own
+  labels onto them.
+- Action commands are the present tense of that condition when the words
+  differ: `close`, `lock`, `unlock`, `fold`, `unfold`. `open`, `on`, `off`,
+  and level names (`low`, `high`, `intermittent`, `auto`) are already the
+  command, so the action uses the same word. After the command reaches the
+  bus, state stores the condition: `lock` records `locked`, and `close`
+  records `closed`.
 - Numeric values use the unit in the table. A profile should map the keyword
   to a DBC signal scaled to that unit, so applications never convert.
 - Apertures with a known travel also have a `<KEYWORD>_POSITION` entity in
@@ -47,15 +53,15 @@ side, because DBC signals are physical.
 
 | Keyword | Used as | Values | Description |
 | --- | --- | --- | --- |
-| `DOORS` | signal, action (values) | `locked`, `unlocked` | Central locking for all doors. The `locked` and `unlocked` actions are what an app's lock button runs. |
+| `DOORS` | signal, action (values) | signal `locked`, `unlocked`; action `lock`, `unlock` | Central locking for all doors. `action("DOORS", { value: "lock" })` runs `DOORS.lock` and records `locked`. |
 | `FRONT_LEFT_DOOR`, `FRONT_RIGHT_DOOR`, `REAR_LEFT_DOOR`, `REAR_RIGHT_DOOR` | signal | `open`, `closed` | Door ajar state. |
-| `TRUNK` | signal, action (values) | `open`, `closed` | Trunk lid, hatch, liftgate, or tailgate. A manual trunk may offer only `open` as a release. |
+| `TRUNK` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Trunk lid, hatch, liftgate, or tailgate. A manual trunk may offer only `open` as a release. |
 | `HOOD` | signal | `open`, `closed` | Hood or bonnet ajar state. |
-| `SUNROOF` | signal, action (values) | `open`, `closed` | Sunroof or moonroof. `SUNROOF_POSITION` gives the travel in percent. |
-| `FRONT_LEFT_WINDOW`, `FRONT_RIGHT_WINDOW`, `REAR_LEFT_WINDOW`, `REAR_RIGHT_WINDOW` | signal, action (values) | `open`, `closed` | Side window state. `<KEYWORD>_POSITION` gives the travel in percent. |
-| `FUEL_DOOR` | signal, action (values) | `open`, `closed` | Fuel filler door or flap. |
-| `CHARGE_PORT` | signal, action (values) | `open`, `closed` | Charge port door. For whether a cable is plugged in, see `CHARGER`. |
-| `MIRRORS` | signal, action (values) | `folded`, `unfolded` | Power-folding side mirrors. |
+| `SUNROOF` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Sunroof or moonroof. `SUNROOF_POSITION` gives the travel in percent. |
+| `FRONT_LEFT_WINDOW`, `FRONT_RIGHT_WINDOW`, `REAR_LEFT_WINDOW`, `REAR_RIGHT_WINDOW` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Side window state. `<KEYWORD>_POSITION` gives the travel in percent. |
+| `FUEL_DOOR` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Fuel filler door or flap. |
+| `CHARGE_PORT` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Charge port door. For whether a cable is plugged in, see `CHARGER`. |
+| `MIRRORS` | signal, action (values) | signal `folded`, `unfolded`; action `fold`, `unfold` | Power-folding side mirrors. `fold` records `folded`. |
 | `FRONT_LEFT_SEATBELT`, `FRONT_RIGHT_SEATBELT` | signal | `fastened`, `unfastened` | Front seat belt buckle state. |
 
 ## 3. Lighting and signalling
@@ -204,8 +210,8 @@ them; applications that must read old profiles map them at the edge.
 | `FRONT_LEFT_DOOR_OPEN`, `FRONT_RIGHT_DOOR_OPEN`, `REAR_LEFT_DOOR_OPEN`, `REAR_RIGHT_DOOR_OPEN` | `FRONT_LEFT_DOOR`, `FRONT_RIGHT_DOOR`, `REAR_LEFT_DOOR`, `REAR_RIGHT_DOOR` |
 | `TRUNK_OPEN` | `TRUNK` |
 | `DOORS_LOCKED`, `DOORS_UNLOCKED` | `DOORS` |
-| `LOCK`, `UNLOCK` | `DOORS` with values `locked`, `unlocked` |
-| `OPEN_TRUNK`, `CLOSE_TRUNK` | `TRUNK` with values `open`, `closed` |
+| `LOCK`, `UNLOCK` | `DOORS` with commands `lock`, `unlock` |
+| `OPEN_TRUNK`, `CLOSE_TRUNK` | `TRUNK` with commands `open`, `close` |
 | `HIGH_BEAM`, `LOW_BEAM` | `HIGH_BEAMS`, `LOW_BEAMS` |
 | `VEHICLE_SPEED` | `SPEED` |
 

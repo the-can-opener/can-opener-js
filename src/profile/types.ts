@@ -1,4 +1,4 @@
-import type { DbcFile } from "../dbc/types.js";
+import type { ByteOrder, DbcFile } from "../dbc/types.js";
 import type { CanFdTxDl } from "../transport/types.js";
 
 export type ProfileByte = number | "*";
@@ -108,6 +108,21 @@ export interface ProfileValueNormalization {
   enum?: Record<string, string>;
 }
 
+export interface ProfileNumberInput {
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface ProfileStepEncoding {
+  startBit: number;
+  length: number;
+  byteOrder?: ByteOrder;
+  signed?: boolean;
+  scale?: number;
+  offset?: number;
+}
+
 export interface RequestStep {
   endpoint?: string;
   requestId?: number;
@@ -120,6 +135,7 @@ export interface RequestStep {
    */
   fd?: boolean;
   send: Uint8Array;
+  encode?: ProfileStepEncoding;
   expect?: ExpectPattern;
   /** Overrides the endpoint response timeout for this step. */
   timeoutMs?: number;
@@ -139,16 +155,19 @@ export interface ProfileQuery {
 }
 
 export interface ProfileAction {
-  /** Full action name. For a value branch this is `ENTITY.value`, e.g. `TRUNK.open`. */
+  /** Full action name. For a value branch this is `ENTITY.value`, e.g. `DOORS.lock`. */
   name: string;
   /**
-   * Set when the action is one target value of a stateful entity, declared
-   * under `actions.<ENTITY>.values.<value>` or as a dotted `ENTITY.value` key.
+   * Set when the action is one command of a stateful entity, declared
+   * under `actions.<ENTITY>.values.<command>` or as a dotted `ENTITY.command` key,
+   * or when the action encodes a numeric target value via `encode`.
    * `entity` is the portable signal name whose state this action sets.
    */
   entity?: string;
-  /** The target value this action sets on `entity`, e.g. `open` or `locked`. */
+  /** Present-tense command this action runs, e.g. `open` or `lock`. State records the resulting condition. */
   value?: string;
+  /** Bounds and step increment when this action encodes a numeric input. */
+  input?: ProfileNumberInput;
   endpoint?: string;
   /**
    * When `false`, multi-step actions are sent one transport transaction at a

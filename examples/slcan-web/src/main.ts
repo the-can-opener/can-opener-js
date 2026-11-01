@@ -24,8 +24,8 @@ const SIGNALS = [
   "REAR_RIGHT_DOOR",
 ] as const;
 
-// Triggers by name; stateful entities by `ENTITY.value`, the same action
-// `vehicle.action("DOORS", { value: "locked" })` runs.
+// Triggers by name; stateful entities by `ENTITY.command`, the same action
+// `vehicle.action("DOORS", { value: "lock" })` runs.
 const ACTIONS = [
   "ECU_WAKE",
   "HORN",
@@ -35,8 +35,8 @@ const ACTIONS = [
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
   "SIGNAL_OFF",
-  "DOORS.locked",
-  "DOORS.unlocked",
+  "DOORS.lock",
+  "DOORS.unlock",
   "WIPERS",
 ] as const;
 

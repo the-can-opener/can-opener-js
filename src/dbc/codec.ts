@@ -174,6 +174,13 @@ function toSigned(value: number, length: number): number {
 }
 
 function fromSigned(value: number, length: number): number {
+  const min = -(2 ** (length - 1));
+  const max = 2 ** (length - 1) - 1;
+  if (value < min || value > max) {
+    throw new Error(
+      `Encoded raw value ${value} does not fit in ${length} signed bits`,
+    );
+  }
   if (value >= 0) {
     return value;
   }
@@ -194,6 +201,19 @@ function normalizeNumericValue(value: unknown): number {
   return value;
 }
 
+export function signalBitPositions(
+  signal: Pick<CodecSignal, "startBit" | "length" | "byteOrder">,
+): number[] {
+  return signal.byteOrder === "big"
+    ? Array.from({ length: signal.length }, (_, index) =>
+        motorolaBitPosition(signal.startBit, index),
+      )
+    : Array.from(
+        { length: signal.length },
+        (_, index) => signal.startBit + index,
+      );
+}
+
 function assertSignalFits(data: Uint8Array, signal: CodecSignal): void {
   if (signal.length <= 0 || signal.length > 52) {
     throw new Error(
@@ -201,15 +221,7 @@ function assertSignalFits(data: Uint8Array, signal: CodecSignal): void {
     );
   }
 
-  const positions =
-    signal.byteOrder === "big"
-      ? Array.from({ length: signal.length }, (_, index) =>
-          motorolaBitPosition(signal.startBit, index),
-        )
-      : Array.from(
-          { length: signal.length },
-          (_, index) => signal.startBit + index,
-        );
+  const positions = signalBitPositions(signal);
 
   const maxBit = data.length * 8 - 1;
   for (const position of positions) {

@@ -1,5 +1,6 @@
+import { signalBitPositions, writeSignalValue } from "../dbc/codec.js";
 import { UnknownVehicleSignalError, VirtualVehicleError } from "../errors.js";
-import { mergeProfileCanBusConfigs } from "./ProfileLoader.js";
+import { actionName, mergeProfileCanBusConfigs } from "./ProfileLoader.js";
 import type {
   LoadedVehicleProfile,
   ProfileAction,
@@ -7,6 +8,7 @@ import type {
   ProfileCanFdConfig,
   ProfileEndpoint,
   ProfileMonitorSignal,
+  ProfileNumberInput,
   ProfileQuery,
   RequestStep,
   ResolvedProfileEndpoint,
@@ -118,11 +120,61 @@ export class CapabilityRegistry {
     return action;
   }
 
+  /**
+   * Resolves a stateful entity target (`{ value }`): looks up `ENTITY.value`
+   * for discrete string targets, or encodes a numeric value into the action's
+   * `encode` step(s).
+   */
+  resolveActionTarget(entity: string, value: string | number): ProfileAction {
+    if (typeof value === "string") {
+      return this.resolveAction(actionName(entity, value));
+    }
+    if (!Number.isFinite(value)) {
+      throw new VirtualVehicleError(`Action ${entity} target value must be a finite number`);
+    }
+    const action = this.actions.get(entity);
+    if (action === undefined) {
+      throw new VirtualVehicleError(`Unknown vehicle action: ${entity}`);
+    }
+    if (action.input === undefined || !action.steps.some((step) => step.encode !== undefined)) {
+      throw new VirtualVehicleError(`Action ${entity} does not accept a numeric value`);
+    }
+    if (action.input.min !== undefined && value < action.input.min) {
+      throw new VirtualVehicleError(`Action ${entity} value ${value} is below minimum ${action.input.min}`);
+    }
+    if (action.input.max !== undefined && value > action.input.max) {
+      throw new VirtualVehicleError(`Action ${entity} value ${value} exceeds maximum ${action.input.max}`);
+    }
+
+    const steps = action.steps.map((step) => {
+      if (step.encode === undefined) {
+        return step;
+      }
+      const maxBit = Math.max(...signalBitPositions(step.encode));
+      const requiredBytes = Math.floor(maxBit / 8) + 1;
+      const send = new Uint8Array(Math.max(step.send.length, requiredBytes));
+      send.set(step.send);
+      try {
+        writeSignalValue(send, { canId: 0, ...step.encode }, value);
+      } catch (error) {
+        throw new VirtualVehicleError(
+          `Action ${entity} value ${value} could not be encoded: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return { ...step, send };
+    });
+
+    return {
+      ...action,
+      steps,
+    };
+  }
+
   hasAction(name: string): boolean {
     return this.actions.has(name);
   }
 
-  /** Target values the loaded profiles can set on an entity, e.g. `["open", "closed"]` for `TRUNK`. */
+  /** Commands the loaded profiles can run on an entity, e.g. `["open", "close"]` for `TRUNK`. */
   actionValues(entity: string): string[] {
     const values: string[] = [];
     for (const action of this.actions.values()) {
@@ -131,6 +183,15 @@ export class CapabilityRegistry {
       }
     }
     return values;
+  }
+
+  /** Bounds and step increment for a numeric-input action entity, or `undefined` when not numeric. */
+  actionInput(entity: string): ProfileNumberInput | undefined {
+    const action = this.actions.get(entity);
+    if (action?.input === undefined) {
+      return undefined;
+    }
+    return { ...action.input };
   }
 
   resolveSignal(name: string): ProfileMonitorSignal {
