@@ -85,6 +85,21 @@ interface RawAction {
   expect?: unknown;
   batch?: unknown;
   steps?: RawStep[];
+  /** Stateful entity: one request definition per target value. */
+  values?: unknown;
+}
+
+/**
+ * Profile spec versions this loader reads. `1` is spec 1.0; `1.1` added
+ * `values` on actions. Minor versions are backward compatible.
+ */
+export const SUPPORTED_PROFILE_VERSIONS: ReadonlySet<number> = new Set([1, 1.1]);
+
+/** Separates an entity from its target value in an action name: `TRUNK.open`. */
+export const ACTION_VALUE_SEPARATOR = ".";
+
+export function actionName(entity: string, value: string): string {
+  return `${entity}${ACTION_VALUE_SEPARATOR}${value}`;
 }
 
 type RawStep = {
@@ -106,8 +121,8 @@ export class ProfileLoader {
     if (raw === undefined || typeof raw !== "object") {
       throw new VirtualVehicleError(`Profile ${source.name} must contain a YAML object`);
     }
-    if (raw.version !== 1) {
-      throw new VirtualVehicleError(`Profile ${source.name} must declare version: 1`);
+    if (!SUPPORTED_PROFILE_VERSIONS.has(raw.version as number)) {
+      throw new VirtualVehicleError(`Profile ${source.name} must declare version: 1 or 1.1`);
     }
 
     const sequences = raw.sequences ?? {};
@@ -123,10 +138,7 @@ export class ProfileLoader {
       canBuses: normalizeCanBuses(raw.can?.buses),
       endpoints,
       queries: Object.entries(raw.queries ?? {}).map(([name, query]) => normalizeQuery(name, query)),
-      actions: Object.entries(raw.actions ?? {}).flatMap(([name, action]) => {
-        const normalized = normalizeAction(name, action, sequences);
-        return normalized === undefined ? [] : [normalized];
-      }),
+      actions: Object.entries(raw.actions ?? {}).flatMap(([name, action]) => normalizeActionEntry(name, action, sequences)),
       signals: Object.entries(raw.signals ?? {}).flatMap(([name, signal]) => normalizeSignal(name, signal)),
     };
   }
@@ -301,20 +313,82 @@ function normalizeQuery(name: string, raw: RawQuery): ProfileQuery {
   };
 }
 
+/**
+ * One `actions.<NAME>` entry. A trigger (`HORN`) yields one action. A stateful
+ * entity with `values` (`TRUNK: { values: { open, closed } }`) yields one
+ * action per value, named `TRUNK.open` and `TRUNK.closed`, each carrying its
+ * entity and value. A dotted key (`TRUNK.open:`) is the same thing written
+ * flat. Placeholder entries without request bytes are skipped.
+ */
+function normalizeActionEntry(
+  name: string,
+  raw: RawAction,
+  sequences: Record<string, RawSequence>,
+): ProfileAction[] {
+  if (raw === null || typeof raw !== "object") {
+    throw new VirtualVehicleError(`actions.${name} must be an object`);
+  }
+  if (raw.values === undefined) {
+    const action = normalizeAction(name, raw, sequences, `actions.${name}`);
+    return action === undefined ? [] : [withEntityFromName(action)];
+  }
+  if (raw.send !== undefined || raw.steps !== undefined || raw.expect !== undefined) {
+    throw new VirtualVehicleError(`actions.${name} cannot declare both values and its own send, steps, or expect`);
+  }
+  if (name.includes(ACTION_VALUE_SEPARATOR)) {
+    throw new VirtualVehicleError(`actions.${name} cannot declare values on a dotted entity name`);
+  }
+  if (raw.values === null || typeof raw.values !== "object" || Array.isArray(raw.values)) {
+    throw new VirtualVehicleError(`actions.${name}.values must be an object keyed by target value`);
+  }
+
+  return Object.entries(raw.values as Record<string, RawAction>).flatMap(([value, branch]) => {
+    const path = `actions.${name}.values.${value}`;
+    if (value.length === 0 || value.includes(ACTION_VALUE_SEPARATOR)) {
+      throw new VirtualVehicleError(`${path} is not a valid target value`);
+    }
+    if (branch === null || typeof branch !== "object") {
+      throw new VirtualVehicleError(`${path} must be an object`);
+    }
+    if (branch.values !== undefined) {
+      throw new VirtualVehicleError(`${path} cannot nest values`);
+    }
+    const action = normalizeAction(actionName(name, value), {
+      ...branch,
+      ...(branch.endpoint === undefined && raw.endpoint !== undefined ? { endpoint: raw.endpoint } : {}),
+      ...(branch.batch === undefined && raw.batch !== undefined ? { batch: raw.batch } : {}),
+    }, sequences, path);
+    return action === undefined ? [] : [{ ...action, entity: name, value }];
+  });
+}
+
+function withEntityFromName(action: ProfileAction): ProfileAction {
+  const separator = action.name.indexOf(ACTION_VALUE_SEPARATOR);
+  if (separator <= 0 || separator === action.name.length - 1) {
+    return action;
+  }
+  const value = action.name.slice(separator + 1);
+  if (value.includes(ACTION_VALUE_SEPARATOR)) {
+    throw new VirtualVehicleError(`actions.${action.name} may contain only one "${ACTION_VALUE_SEPARATOR}"`);
+  }
+  return { ...action, entity: action.name.slice(0, separator), value };
+}
+
 function normalizeAction(
   name: string,
   raw: RawAction,
   sequences: Record<string, RawSequence>,
+  path: string,
 ): ProfileAction | undefined {
   const endpoint = raw.endpoint !== undefined
-    ? readString(raw.endpoint, `actions.${name}.endpoint`)
+    ? readString(raw.endpoint, `${path}.endpoint`)
     : undefined;
   const steps = raw.steps !== undefined
     ? expandSteps(raw.steps, sequences, raw.endpoint)
     : raw.send !== undefined
       ? [{
-          ...readSendStep(raw.send, `actions.${name}.send`, endpoint),
-          ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `actions.${name}.expect`) } : {}),
+          ...readSendStep(raw.send, `${path}.send`, endpoint),
+          ...(raw.expect !== undefined ? { expect: normalizeExpect(raw.expect, `${path}.expect`) } : {}),
         }]
       : undefined;
 
@@ -325,7 +399,7 @@ function normalizeAction(
   return {
     name,
     ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(raw.batch !== undefined ? { batch: readBoolean(raw.batch, `actions.${name}.batch`) } : {}),
+    ...(raw.batch !== undefined ? { batch: readBoolean(raw.batch, `${path}.batch`) } : {}),
     steps,
   };
 }

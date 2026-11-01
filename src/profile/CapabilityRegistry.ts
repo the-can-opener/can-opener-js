@@ -122,6 +122,17 @@ export class CapabilityRegistry {
     return this.actions.has(name);
   }
 
+  /** Target values the loaded profiles can set on an entity, e.g. `["open", "closed"]` for `TRUNK`. */
+  actionValues(entity: string): string[] {
+    const values: string[] = [];
+    for (const action of this.actions.values()) {
+      if (action.entity === entity && action.value !== undefined) {
+        values.push(action.value);
+      }
+    }
+    return values;
+  }
+
   resolveSignal(name: string): ProfileMonitorSignal {
     const signal = this.signals.get(name);
     if (signal === undefined) {

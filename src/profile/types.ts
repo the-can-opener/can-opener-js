@@ -139,7 +139,16 @@ export interface ProfileQuery {
 }
 
 export interface ProfileAction {
+  /** Full action name. For a value branch this is `ENTITY.value`, e.g. `TRUNK.open`. */
   name: string;
+  /**
+   * Set when the action is one target value of a stateful entity, declared
+   * under `actions.<ENTITY>.values.<value>` or as a dotted `ENTITY.value` key.
+   * `entity` is the portable signal name whose state this action sets.
+   */
+  entity?: string;
+  /** The target value this action sets on `entity`, e.g. `open` or `locked`. */
+  value?: string;
   endpoint?: string;
   /**
    * When `false`, multi-step actions are sent one transport transaction at a

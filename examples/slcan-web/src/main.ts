@@ -18,23 +18,25 @@ const SIGNALS = [
   "HIGH_BEAMS",
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
-  "FRONT_LEFT_DOOR_OPEN",
-  "FRONT_RIGHT_DOOR_OPEN",
-  "REAR_LEFT_DOOR_OPEN",
-  "REAR_RIGHT_DOOR_OPEN",
+  "FRONT_LEFT_DOOR",
+  "FRONT_RIGHT_DOOR",
+  "REAR_LEFT_DOOR",
+  "REAR_RIGHT_DOOR",
 ] as const;
 
+// Triggers by name; stateful entities by `ENTITY.value`, the same action
+// `vehicle.action("DOORS", { value: "locked" })` runs.
 const ACTIONS = [
   "ECU_WAKE",
   "HORN",
-  "HIGH_BEAM",
+  "HIGH_BEAMS",
   "RUNNING_LIGHTS",
-  "LOW_BEAM",
+  "LOW_BEAMS",
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
   "SIGNAL_OFF",
-  "LOCK",
-  "UNLOCK",
+  "DOORS.locked",
+  "DOORS.unlocked",
   "WIPERS",
 ] as const;
 

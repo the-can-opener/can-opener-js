@@ -1,4 +1,4 @@
-version: 1
+version: 1.1
 profile_version: 1.0.0
 name: Nissan Versa Vehicle Profile
 
@@ -73,22 +73,22 @@ signals:
       message: LIGHTS_STATUS_60D
       signal: RIGHT_SIGNAL
 
-  FRONT_LEFT_DOOR_OPEN:
+  FRONT_LEFT_DOOR:
     monitor:
       message: LIGHTS_STATUS_60D
       signal: FRONT_LEFT_DOOR_OPEN
 
-  FRONT_RIGHT_DOOR_OPEN:
+  FRONT_RIGHT_DOOR:
     monitor:
       message: LIGHTS_STATUS_60D
       signal: FRONT_RIGHT_DOOR_OPEN
 
-  REAR_LEFT_DOOR_OPEN:
+  REAR_LEFT_DOOR:
     monitor:
       message: LIGHTS_STATUS_60D
       signal: REAR_LEFT_DOOR_OPEN
 
-  REAR_RIGHT_DOOR_OPEN:
+  REAR_RIGHT_DOOR:
     monitor:
       message: LIGHTS_STATUS_60D
       signal: REAR_RIGHT_DOOR_OPEN
@@ -109,7 +109,7 @@ actions:
       - send: [0x04, 0x30, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00]
         expect: [0x70, 0x30, 0x01]
 
-  HIGH_BEAM:
+  HIGH_BEAMS:
     endpoint: body
     steps:
       - ref: sequences.body_session_prep
@@ -123,7 +123,7 @@ actions:
       - send: [0x04, 0x30, 0x3A, 0x00, 0x01, 0x00, 0x00, 0x00]
         expect: [0x70, 0x3A, 0x01]
 
-  LOW_BEAM:
+  LOW_BEAMS:
     endpoint: body
     steps:
       - ref: sequences.body_session_prep
@@ -153,19 +153,20 @@ actions:
       - send: [0x04, 0x30, 0x2F, 0x00, 0x00, 0x00, 0x00, 0x00]
         expect: [0x70, 0x2F, "*"]
 
-  LOCK:
+  # Central locking: `vehicle.action("DOORS", { value: "locked" })`.
+  DOORS:
     endpoint: body
-    steps:
-      - ref: sequences.body_session_prep
-      - send: [0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00]
-        expect: [0x70, 0x38, "*"]
-
-  UNLOCK:
-    endpoint: body
-    steps:
-      - ref: sequences.body_session_prep
-      - send: [0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00]
-        expect: [0x70, 0x38, "*"]
+    values:
+      locked:
+        steps:
+          - ref: sequences.body_session_prep
+          - send: [0x04, 0x30, 0x38, 0x00, 0x01, 0x00, 0x00, 0x00]
+            expect: [0x70, 0x38, "*"]
+      unlocked:
+        steps:
+          - ref: sequences.body_session_prep
+          - send: [0x04, 0x30, 0x38, 0x00, 0x02, 0x00, 0x00, 0x00]
+            expect: [0x70, 0x38, "*"]
 
   WIPERS:
     send:

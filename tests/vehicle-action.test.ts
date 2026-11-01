@@ -137,6 +137,57 @@ describe("VirtualVehicle.action", () => {
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
   });
 
+  it("runs a stateful entity by target value and records the target in state", async () => {
+    const transport = new MockTransport();
+    const car = await new VirtualVehicleManager().connect({
+      id: "car-a",
+      transport,
+      profiles: [{
+        ...testVehicleProfile,
+        content: `version: 1
+
+endpoints:
+  body:
+    request_id: 200
+    response_id: 201
+
+actions:
+  TRUNK:
+    endpoint: body
+    values:
+      open:
+        send: [0x01]
+        expect: [0x41]
+      closed:
+        send: [0x02]
+        expect: [0x42]
+  DOORS.locked:
+    endpoint: body
+    send: [0x03]
+`,
+      }],
+    });
+    const frame = (first: number) => ({ canId: 200, data: Uint8Array.from([first, 0, 0, 0, 0, 0, 0, 0]) });
+    transport.scriptPidResponse(frame(0x01), Uint8Array.from([0x41]));
+    transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x00]));
+
+    await expect(car.action("TRUNK", { value: "open" })).resolves.toBe(true);
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]).toMatchObject({ signalName: "TRUNK.open" });
+    expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
+    expect(car.state.get("TRUNK")).toBe("open");
+
+    // The fully named form is the same action. A rejected request leaves the
+    // recorded target alone.
+    await expect(car.action("TRUNK.closed")).resolves.toBe(false);
+    expect(car.state.get("TRUNK")).toBe("open");
+
+    await expect(car.action("DOORS", { value: "locked" })).resolves.toBeUndefined();
+    expect(car.state.get("DOORS")).toBe("locked");
+
+    await expect(car.action("TRUNK", { value: "ajar" })).rejects.toThrow(/Unknown vehicle action: TRUNK\.ajar/u);
+  });
+
   it("sends actions that declare inline request_id values", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();

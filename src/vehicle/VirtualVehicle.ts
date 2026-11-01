@@ -18,7 +18,7 @@ import type {
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
-import { ProfileLoader } from "../profile/ProfileLoader.js";
+import { ProfileLoader, actionName } from "../profile/ProfileLoader.js";
 import type {
   ActionRunResult,
   ProfileValueNormalization,
@@ -56,6 +56,17 @@ interface ResolvedSubscriptionRequest {
   state: VehicleSignalState;
   bus?: number;
   normalize?: ProfileValueNormalization;
+}
+
+/** Target value for a stateful profile entity, e.g. `{ value: "open" }` for `TRUNK`. */
+export interface ProfileActionTarget {
+  value: string;
+}
+
+function isProfileActionTarget(
+  opts: ProfileActionTarget | ActionOptions,
+): opts is ProfileActionTarget {
+  return typeof opts.value === "string" && Object.keys(opts).length === 1;
 }
 
 export class VirtualVehicle {
@@ -198,15 +209,25 @@ export class VirtualVehicle {
     this.internals.busActivity.wake();
   }
 
+  /** Runs a profile trigger (`HORN`) or a fully named value action (`TRUNK.open`). */
   async action(actionName: string): Promise<ActionRunResult>;
+  /** Sets a profile entity to a target value: `action("TRUNK", { value: "open" })` runs `TRUNK.open`. */
+  async action(entity: string, target: ProfileActionTarget): Promise<ActionRunResult>;
+  /** Encodes and sends a raw DBC frame signal; only without loaded profiles. */
   async action(signalName: string, opts: ActionOptions): Promise<void>;
-  async action(name: string, opts?: ActionOptions): Promise<ActionRunResult | void> {
+  async action(
+    name: string,
+    opts?: ProfileActionTarget | ActionOptions,
+  ): Promise<ActionRunResult | void> {
     if (this.internals.capabilities.hasProfiles()) {
-      if (opts !== undefined) {
+      if (opts !== undefined && !isProfileActionTarget(opts)) {
         throw new VirtualVehicleError(
           `Profile action ${name} does not accept raw frame action options`,
         );
       }
+      const action = this.internals.capabilities.resolveAction(
+        opts === undefined ? name : actionName(name, opts.value),
+      );
       // Background queries would otherwise queue up on the transport and the
       // device ahead of each step and retry, and on a half-awake bus every
       // one of them waits out its full timeout first.
@@ -214,12 +235,14 @@ export class VirtualVehicle {
       this.internals.queries.holdPolling();
       try {
         const wakeFirst = this.internals.busActivity.isAwake() === false;
-        const result = await this.internals.actions.run(
-          this.internals.capabilities.resolveAction(name),
-          { wakeFirst },
-        );
+        const result = await this.internals.actions.run(action, { wakeFirst });
         if (result === true || result === undefined) {
           this.internals.busActivity.recordActivity();
+        }
+        // The request reached the bus, so record the target value. A monitor
+        // or query for the same entity overwrites it with the reported state.
+        if (result !== false && action.entity !== undefined && action.value !== undefined) {
+          this.state.update(action.entity, action.value);
         }
         return result;
       } finally {
