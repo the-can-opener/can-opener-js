@@ -48,7 +48,7 @@ const speed = vehicle.state.get<number>("SPEED");
 const rpm = await vehicle.query("RPM");
 await vehicle.action("HORN");                        // trigger
 await vehicle.action("DOORS", { value: "lock" });    // present-tense command
-vehicle.state.get<string>("DOORS");                  // "locked" | "unlocked"
+vehicle.state.get<string>("DOORS");                  // "lock" (the declared value)
 vehicle.state.get<string>("TRUNK");                  // "open" | "closed"
 ```
 
@@ -76,7 +76,8 @@ profiles already use.
   profile declares whichever its vehicle supports. Reported values and action
   commands use the vocabularies in section 3.2. After `subscribe("TRUNK")`,
   `state.get("TRUNK")` is `"open"` or `"closed"`;
-  `action("TRUNK", { value: "close" })` is the command that produces `"closed"`.
+  `action("TRUNK", { value: "close" })` records `"close"` until a signal or
+  query reports the resulting condition.
 - Position prefixes are `FRONT_`/`REAR_` and `LEFT_`/`RIGHT_`, as seen from
   the driver's seat facing forward. They are physical sides, not
   driver/passenger, because DBC signals are physical. Place them before the
@@ -88,11 +89,11 @@ profiles already use.
   `LEFT_SIGNAL` as a trigger flashes the indicator once. A profile for a
   vehicle whose body module latches the indicator declares
   `LEFT_SIGNAL: { values: { on, off } }` instead.
-- After a value action reaches the bus, the library records the resulting
-  condition in state under the entity name: `lock` records `locked`, and
-  `close` records `closed`. A command that already names the condition, such
-  as `open` or `on`, is recorded unchanged. A monitor or query for the same
-  entity then overwrites it with what the vehicle reports.
+- After a value action reaches the bus, the library records the
+  profile-declared value unchanged under the entity name. It does not infer
+  that `lock` means `locked` or `close` means `closed`; applications that use
+  this naming convention may interpret those commands. A monitor or query for
+  the same entity then overwrites the command with what the vehicle reports.
 
 A rough VSS correspondence, for readers who know that vocabulary:
 
@@ -754,7 +755,7 @@ an entity with `values` cannot also declare its own `send`, `steps`, or
 ```ts
 await vehicle.action("DOORS", { value: "lock" });  // runs DOORS.lock
 await vehicle.action("DOORS.lock");                // the same action
-vehicle.state.get("DOORS");                        // "locked"
+vehicle.state.get("DOORS");                        // "lock"
 ```
 
 `action(entity, { value })` resolves `entity.value` and rejects with
@@ -762,10 +763,10 @@ vehicle.state.get("DOORS");                        // "locked"
 `CapabilityRegistry.actionValues("DOORS")` lists the commands a loaded profile
 offers, such as `lock` and `unlock`. When the result is not `false`, that is,
 the request was verified, request-only, or reached the bus with an unverified
-retry, the library records the resulting condition in state under the entity
-name (`lock` records `locked`, `close` records `closed`, `open` records
-`open`). A monitor or query for the same entity overwrites it with the
-reported value. A `false` result leaves state alone.
+retry, the library records the declared action value unchanged in state under
+the entity name (`lock` records `lock`, and `close` records `close`). A
+monitor or query for the same entity overwrites it with the reported value. A
+`false` result leaves state alone.
 
 A numeric entity such as `CABIN_TEMP_SETPOINT` or `CHARGE_LIMIT` declares
 `encode` instead of `values`. At runtime `action(entity, { value: 22 })`
@@ -977,7 +978,7 @@ the separate BLE protocol specification.
   a name identifies a thing (`TRUNK`, `FRONT_LEFT_DOOR`), never a predicate
   or verb. The monitor signal, query, and action for one entity share that
   name. Reported values are conditions, and action commands are present tense
-  (`lock` records `locked`, `close` records `closed`) (section 3).
+  (`lock`, `close`) (section 3).
 - The common keyword list moved to [Vehicle Keywords](./vehicle-keywords.md),
   with a description for each keyword, and grew to cover sunroof, windows,
   hood, fuel door, charge port, mirrors, odometer, range, ignition, gear,
@@ -987,9 +988,9 @@ the separate BLE protocol specification.
   present-tense command, loading as `ENTITY.value` actions with `entity` and
   `value` set. The flat `ENTITY.value:` key is equivalent (section 14).
 - `VirtualVehicle.action(entity, { value })` runs the matching command and
-  records the resulting condition in vehicle state when the request reached
-  the bus. `CapabilityRegistry.actionValues(entity)` lists the commands a
-  profile offers.
+  records that profile-declared value unchanged in vehicle state when the
+  request reached the bus. `CapabilityRegistry.actionValues(entity)` lists
+  the commands a profile offers.
 - Renamed: `FRONT_LEFT_DOOR_OPEN` and the other doors drop `_OPEN`;
   `LOCK`/`UNLOCK` become `DOORS` with commands `lock`/`unlock`;
   `OPEN_TRUNK`/`CLOSE_TRUNK` become `TRUNK` with commands `open`/`close`;

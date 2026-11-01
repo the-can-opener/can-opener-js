@@ -17,7 +17,6 @@ import type {
   VehicleSignalState,
 } from "../dbc/types.js";
 import { SignalProtocolError, VirtualVehicleError } from "../errors.js";
-import { recordedActionState } from "../profile/actionState.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../profile/ProfileLoader.js";
 import type {
@@ -249,13 +248,12 @@ export class VirtualVehicle {
         if (result === true || result === undefined) {
           this.internals.busActivity.recordActivity();
         }
-        // The request reached the bus, so record the resulting condition.
-        // `lock` records `locked`. A monitor or query for the same entity
+        // Record the profile's target unchanged. The library does not
+        // interpret vocabulary; a monitor or query for the same entity
         // overwrites it with what the vehicle reports.
         const targetValue = opts !== undefined ? opts.value : action.value;
         if (result !== false && action.entity !== undefined && targetValue !== undefined) {
-          const recorded = typeof targetValue === "string" ? recordedActionState(targetValue) : targetValue;
-          this.state.update(action.entity, recorded);
+          this.state.update(action.entity, targetValue);
         }
         return result;
       } finally {

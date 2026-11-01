@@ -164,7 +164,7 @@ export interface ProfileAction {
    * `entity` is the portable signal name whose state this action sets.
    */
   entity?: string;
-  /** Present-tense command this action runs, e.g. `open` or `lock`. State records the resulting condition. */
+  /** Profile-declared action value, recorded unchanged in state after the action reaches the bus. */
   value?: string;
   /** Bounds and step increment when this action encodes a numeric input. */
   input?: ProfileNumberInput;

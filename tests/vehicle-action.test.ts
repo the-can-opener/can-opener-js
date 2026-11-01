@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanFrame, CanPayload } from "../src/dbc/types.js";
 import { CanTransmitError, NoEcuResponseError } from "../src/errors.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
-import { recordedActionState } from "../src/profile/actionState.js";
 import { CapabilityRegistry } from "../src/profile/CapabilityRegistry.js";
 import { ProfileLoader } from "../src/profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../src/profile/types.js";
@@ -140,7 +139,7 @@ describe("VirtualVehicle.action", () => {
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
   });
 
-  it("runs a present-tense command and records the resulting condition", async () => {
+  it("runs a present-tense command and records its value unchanged", async () => {
     const transport = new MockTransport();
     const car = await new VirtualVehicleManager().connect({
       id: "car-a",
@@ -184,30 +183,20 @@ actions:
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
     expect(car.state.get("TRUNK")).toBe("open");
 
-    // A rejected request leaves the recorded condition alone.
+    // A rejected request leaves the recorded value alone.
     await expect(car.action("TRUNK.close")).resolves.toBe(false);
     expect(car.state.get("TRUNK")).toBe("open");
 
     transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x42]));
     await expect(car.action("TRUNK", { value: "close" })).resolves.toBe(true);
-    expect(car.state.get("TRUNK")).toBe("closed");
+    expect(car.state.get("TRUNK")).toBe("close");
 
     await expect(car.action("DOORS", { value: "lock" })).resolves.toBeUndefined();
-    expect(car.state.get("DOORS")).toBe("locked");
+    expect(car.state.get("DOORS")).toBe("lock");
     await expect(car.action("DOORS.unlock")).resolves.toBeUndefined();
-    expect(car.state.get("DOORS")).toBe("unlocked");
+    expect(car.state.get("DOORS")).toBe("unlock");
 
     await expect(car.action("TRUNK", { value: "ajar" })).rejects.toThrow(/Unknown vehicle action: TRUNK\.ajar/u);
-  });
-
-  it("records the condition for a present-tense action command", () => {
-    expect(recordedActionState("lock")).toBe("locked");
-    expect(recordedActionState("unlock")).toBe("unlocked");
-    expect(recordedActionState("close")).toBe("closed");
-    expect(recordedActionState("fold")).toBe("folded");
-    expect(recordedActionState("unfold")).toBe("unfolded");
-    expect(recordedActionState("open")).toBe("open");
-    expect(recordedActionState("on")).toBe("on");
   });
 
   it("encodes numeric action targets, enforces min/max bounds, and updates state with the number", async () => {

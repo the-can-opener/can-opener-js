@@ -135,9 +135,9 @@ describe("Nissan Sentra DBC", () => {
 
     await expect(car.action("HORN")).resolves.toBe(true);
     await expect(car.action("DOORS", { value: "lock" })).resolves.toBe(true);
-    expect(car.state.get<string>("DOORS")).toBe("locked");
+    expect(car.state.get<string>("DOORS")).toBe("lock");
     await expect(car.action("DOORS", { value: "unlock" })).resolves.toBe(true);
-    expect(car.state.get<string>("DOORS")).toBe("unlocked");
+    expect(car.state.get<string>("DOORS")).toBe("unlock");
 
     expect(transport.requests.map((request) => ({
       canId: request.txFrame.canId,

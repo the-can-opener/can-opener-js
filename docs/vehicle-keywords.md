@@ -37,9 +37,10 @@ Values and units:
 - Action commands are the present tense of that condition when the words
   differ: `close`, `lock`, `unlock`, `fold`, `unfold`. `open`, `on`, `off`,
   and level names (`low`, `high`, `intermittent`, `auto`) are already the
-  command, so the action uses the same word. After the command reaches the
-  bus, state stores the condition: `lock` records `locked`, and `close`
-  records `closed`.
+  command, so the action uses the same word. The library records that
+  profile-declared command unchanged after it reaches the bus; applications
+  may interpret this convention, and a signal or query later replaces it
+  with the reported condition.
 - Numeric values use the unit in the table. A profile should map the keyword
   to a DBC signal scaled to that unit, so applications never convert.
 - Apertures with a known travel also have a `<KEYWORD>_POSITION` entity in
@@ -53,7 +54,7 @@ side, because DBC signals are physical.
 
 | Keyword | Used as | Values | Description |
 | --- | --- | --- | --- |
-| `DOORS` | signal, action (values) | signal `locked`, `unlocked`; action `lock`, `unlock` | Central locking for all doors. `action("DOORS", { value: "lock" })` runs `DOORS.lock` and records `locked`. |
+| `DOORS` | signal, action (values) | signal `locked`, `unlocked`; action `lock`, `unlock` | Central locking for all doors. `action("DOORS", { value: "lock" })` runs `DOORS.lock`. |
 | `FRONT_LEFT_DOOR`, `FRONT_RIGHT_DOOR`, `REAR_LEFT_DOOR`, `REAR_RIGHT_DOOR` | signal | `open`, `closed` | Door ajar state. |
 | `TRUNK` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Trunk lid, hatch, liftgate, or tailgate. A manual trunk may offer only `open` as a release. |
 | `HOOD` | signal | `open`, `closed` | Hood or bonnet ajar state. |
@@ -61,7 +62,7 @@ side, because DBC signals are physical.
 | `FRONT_LEFT_WINDOW`, `FRONT_RIGHT_WINDOW`, `REAR_LEFT_WINDOW`, `REAR_RIGHT_WINDOW` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Side window state. `<KEYWORD>_POSITION` gives the travel in percent. |
 | `FUEL_DOOR` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Fuel filler door or flap. |
 | `CHARGE_PORT` | signal, action (values) | signal `open`, `closed`; action `open`, `close` | Charge port door. For whether a cable is plugged in, see `CHARGER`. |
-| `MIRRORS` | signal, action (values) | signal `folded`, `unfolded`; action `fold`, `unfold` | Power-folding side mirrors. `fold` records `folded`. |
+| `MIRRORS` | signal, action (values) | signal `folded`, `unfolded`; action `fold`, `unfold` | Power-folding side mirrors. |
 | `FRONT_LEFT_SEATBELT`, `FRONT_RIGHT_SEATBELT` | signal | `fastened`, `unfastened` | Front seat belt buckle state. |
 
 ## 3. Lighting and signalling
