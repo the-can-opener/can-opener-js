@@ -290,7 +290,7 @@ The firmware handles:
 - first and consecutive frames
 - flow-control CTS
 - UDS response pending, `7F service 78`
-- responses up to 512 application bytes
+- responses up to 4095 application bytes
 - BLE response fragmentation
 
 For a multi-frame standard 11-bit response, the firmware sends flow control to
@@ -321,20 +321,37 @@ instead of a ready-to-send classic CAN frame.
 [7..10]   response_id_start:u32
 [11..14]  response_id_end:u32
 [15..16]  timeout_ms:u16
-[17]      payload_length, 1 through 255
-[18..]    application_payload
+[17..18]  payload_length:u16, 1 through 4095
+[19..]    application_payload
 ```
 
-The total write length must be exactly `18 + payload_length` and no more than
-244 bytes.
+When `19 + payload_length` fits in one 244-byte BLE write, the write carries
+the entire payload and the firmware runs the ISO-TP exchange immediately.
+
+When `19 + payload_length` exceeds one 244-byte BLE write (`payload_length` up
+to 4095 bytes), the first write carries the header plus the first slice of
+`application_payload`, and the remaining bytes follow in consecutive writes
+for the same `sequence`:
+
+```text
+[0]       sequence
+[1]       flags (0x08, or the initial request flags)
+[2..3]    fragment_offset:u16
+[4..]     application_payload[fragment_offset..]
+```
+
+As soon as `fragment_offset + chunk_length == payload_length`, the firmware
+transmits the full ISO-TP request on CAN and returns the request notification
+for `sequence`. A `payload_length` above 4095 returns `0xE6`; a zero length or
+an out-of-order `fragment_offset` aborts the transfer and returns `0xE1`.
 
 The firmware adds ISO-TP PCI, segments long requests, obeys ECU flow control,
 supports block size and STmin, and optionally waits for a reassembled
 response. Set flag `0x01` when a response is expected.
 
 With flag `0x20` the two address bytes of section 5.1 follow `bus`, every
-later field moves back by two, and the total write length is
-`20 + payload_length`. The payload stays application bytes; the firmware puts
+later field moves back by two, and a single-write packet has length
+`21 + payload_length`. The payload stays application bytes; the firmware puts
 `tx_address` in front of the PCI of every frame it sends and reads flow
 control and reply frames only when they start with `rx_address`.
 
@@ -348,22 +365,16 @@ control and reply frames only when they start with `rx_address`.
 [9..12]   response_id_start:u32
 [13..16]  response_id_end:u32
 [17..18]  timeout_ms:u16
-[19]      payload_length, 1 through 224
-[20..]    application_payload
+[19..20]  payload_length:u16, 1 through 4095
+[21..]    application_payload
 ```
 
 With flags `0x08 | 0x20 | 0x40`, `tx_dl` sits at `[19]`, `payload_length` at
-`[20]`, and the total write length is `21 + payload_length`.
+`[20..21]`, and the payload starts at `[22]` (`22 + payload_length` when sent
+in one write).
 
-Every v3 request returns a request notification, including a request-only v3
-write that reaches the request task. The notification reports its final
-transport status.
-
-Current firmware has one queue-full exception: when a v3 request has flag
-`0x01` clear and the request command queue is already full, the write is
-dropped without an `0xE9` notification. There is no guaranteed delivery-only
-result for request-only v3 traffic under queue saturation. Set flag `0x01`
-only when the transaction semantically expects an ECU response.
+Every completed v3 request returns a request notification, including a
+request-only v3 request. The notification reports its final transport status.
 
 Profile `send` is one classic CAN frame, so a classic `VehicleRequest` maps to
 v2. A `VehicleRequest` with `canFd.txDl` 64 maps to v3 with flag `0x40`
@@ -382,11 +393,13 @@ Set flags `0x08 | 0x40`. One byte is inserted after the timeout:
 [11..14]  response_id_end:u32
 [15..16]  timeout_ms:u16
 [17]      tx_dl, 8 or 64
-[18]      payload_length, 1 through 225
-[19..]    application_payload, without PCI
+[18..19]  payload_length:u16, 1 through 4095
+[20..]    application_payload, without PCI
 ```
 
-The total write length must be exactly `19 + payload_length`. Any other
+A single-write packet has length `20 + payload_length`; payloads larger than
+one 244-byte BLE write stream their remaining bytes with the 4-byte
+continuation header of section 8. Any other
 `tx_dl` returns `0xE2`. Without flag `0x40`, v3 is the classic layout above.
 
 The firmware pads every frame it sends, including flow control, with `0x00` to
@@ -420,7 +433,7 @@ E8 07 00 00
 EF 07 00 00
 F4 01
 40
-02
+02 00
 01 0D
 ```
 
@@ -484,7 +497,7 @@ Batch limits:
 - at most 244 total BLE bytes
 - one logical bus
 - at most 30,000 ms total of response timeouts and post-step delays
-- at most 512 bytes in the combined result
+- at most 4095 bytes in the combined result
 
 The firmware validates the entire packet before transmitting a step. DLC,
 length, ID, bus, step count, and budget errors reject the whole batch.
@@ -570,7 +583,7 @@ When response flag `0x02` is set, payload begins with:
 
 Reassemble fragments by sequence and offset. Complete the response when a
 fragment arrives without flag `0x04`. Validate overlaps, gaps, and the
-512-byte maximum before returning the payload.
+4095-byte maximum before returning the payload.
 
 The `payload_length` field describes bytes in that BLE notification, including
 the two-byte offset when fragmented.
@@ -774,8 +787,8 @@ Current firmware implements:
 - logical bus `1`
 - classic CAN request payloads up to eight bytes
 - CAN FD diagnostic requests and replies with `tx_dl` 8 or 64 (section 8.1)
-- ISO-TP application responses up to 512 bytes
-- v3 ISO-TP request payloads constrained by the 244-byte BLE write
+- ISO-TP application requests and responses up to 4095 bytes
+- multi-write v3 ISO-TP requests across 244-byte BLE writes (section 8)
 
 Monitor and capture records carry at most 8 data bytes. A longer FD frame on
 the live stream shows its first 8 bytes and reports a DLC of 8.
