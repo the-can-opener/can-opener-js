@@ -1,5 +1,5 @@
-import type { CanOpenerGattLink } from "../ble/gattLink.js";
-import { CAN_OPENER_SERVICE_UUID } from "../ble/protocol.js";
+import { CAN_OPENER_SERVICE_UUID } from "../transport/bleProtocol.js";
+import type { CanOpenerGattLink } from "../transport/gattLink.js";
 import { BleAccessError } from "../security/errors.js";
 import type { SecurityWritePolicy } from "../security/pairing.js";
 

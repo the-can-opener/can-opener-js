@@ -17,7 +17,7 @@ import type {
   VehicleDisconnectOptions,
   VehicleRequest,
   VehicleTransport,
-} from "../transport/types.js";
+} from "./types.js";
 import {
   batchBudgetMs,
   batchStepTimeoutMs,
@@ -28,7 +28,7 @@ import {
   resolveBatchBus,
   toBatchStepResult,
   toBatchStepResults,
-} from "./batch.js";
+} from "./bleBatch.js";
 import type { CanOpenerGattLink, WarningHandler } from "./gattLink.js";
 import {
   buildCanBusConfigPacket,
@@ -40,7 +40,7 @@ import {
   parseMonitorDataPacket,
   parseNanEnableResponse,
   type NanEnableResponse,
-} from "./monitor.js";
+} from "./bleMonitor.js";
 import {
   buildRequestPackets,
   CanResponseAssembler,
@@ -50,14 +50,14 @@ import {
   REQUEST_CHAR_UUID,
   type CanNotification,
   type CanResponse,
-} from "./protocol.js";
+} from "./bleProtocol.js";
 import {
   describeRequestStatus,
   REQUEST_PACKET_DEFAULT_TIMEOUT_MS,
   REQUEST_STATUS_OK,
   requestStatusError,
   sendsAsCanFdPayload,
-} from "./wire.js";
+} from "./bleWire.js";
 
 const REQUEST_RESPONSE_TIMEOUT_MS = 1000;
 // A declared timeout is enforced by the adapter. The client waits slightly

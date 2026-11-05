@@ -1,4 +1,4 @@
-import type { VehicleBatchRequest, VehicleBatchStep, VehicleBatchStepResult } from "../transport/types.js";
+import type { VehicleBatchRequest, VehicleBatchStep, VehicleBatchStepResult } from "./types.js";
 import {
   BLE_MAX_REQUEST_WRITE_BYTES,
   describeRequestStatus,
@@ -18,7 +18,7 @@ import {
   resolveResponseIds,
   sendsAsCanFdPayload,
   validateBus,
-} from "./wire.js";
+} from "./bleWire.js";
 
 // v4 batch layout. Must stay in sync with the firmware.
 const BATCH_FLAG_CONTINUE_ON_ERROR = 0x01;

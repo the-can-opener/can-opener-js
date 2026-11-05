@@ -1,6 +1,6 @@
-import type { CanOpenerGattLink } from "../ble/gattLink.js";
-import { SECURITY_CHAR_UUID } from "../ble/protocol.js";
 import { delay } from "../delay.js";
+import { SECURITY_CHAR_UUID } from "../transport/bleProtocol.js";
+import type { CanOpenerGattLink } from "../transport/gattLink.js";
 import type { DeviceCredential } from "./credentials.js";
 import { BleAccessError } from "./errors.js";
 import { SecuritySession, type Authentication, type SecuritySessionOptions } from "./session.js";

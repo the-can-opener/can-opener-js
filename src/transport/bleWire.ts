@@ -1,5 +1,5 @@
 import { CanTransmitError, NoEcuResponseError } from "../errors.js";
-import type { VehicleRequest } from "../transport/types.js";
+import type { VehicleRequest } from "./types.js";
 
 // Values shared by the Can Opener SE packet layouts. All multi-byte fields are
 // little-endian (ESP32 native byte order). Must stay in sync with the firmware.

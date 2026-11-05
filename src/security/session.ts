@@ -1,4 +1,4 @@
-import type { WarningHandler } from "../ble/gattLink.js";
+import type { WarningHandler } from "../transport/gattLink.js";
 import { bytesToHex, hexToBytes, readU8 } from "./bytes.js";
 import { roleFromCode, type AccessRole, type DeviceCredential, type GuestList } from "./credentials.js";
 import { BleAccessError, SECURITY_STATUSES, SecurityStatusError, type SecurityStatus } from "./errors.js";

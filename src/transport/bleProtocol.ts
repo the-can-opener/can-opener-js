@@ -1,4 +1,4 @@
-import type { CanFdTxDl, VehicleRequest } from "../transport/types.js";
+import type { CanFdTxDl, VehicleRequest } from "./types.js";
 import {
   BLE_MAX_REQUEST_WRITE_BYTES,
   ISOTP_ADDRESSING_FIELD_SIZE,
@@ -13,7 +13,7 @@ import {
   RESPONSE_FLAG_CAN_ID_EXTENDED,
   resolveResponseIds,
   validateBus,
-} from "./wire.js";
+} from "./bleWire.js";
 
 /** Can Opener SE GATT service and characteristics. See `docs/can-opener-se-ble-protocol.md`. */
 export const CAN_OPENER_SERVICE_UUID = "00000180-0000-1000-8000-00805f9b34fb";

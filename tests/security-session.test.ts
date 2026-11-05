@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CanOpenerGattLink } from "../src/ble/gattLink.js";
-import { SECURITY_CHAR_UUID } from "../src/ble/protocol.js";
+import { SECURITY_CHAR_UUID, type CanOpenerGattLink } from "../src/ble/index.js";
 import {
   BleAccessError,
   buildSecurityRequest,

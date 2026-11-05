@@ -5,8 +5,8 @@ import type {
   MonitorControlRequest,
   MonitorControlResponse,
   MonitorControlStatus,
-} from "../transport/types.js";
-import { validateBus } from "./wire.js";
+} from "./types.js";
+import { validateBus } from "./bleWire.js";
 
 // Monitor control (0xA003) and monitor data (0xA004) layouts. Must stay in
 // sync with the firmware.
