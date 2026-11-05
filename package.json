@@ -16,6 +16,21 @@
       "types": "./dist/transport/index.d.ts",
       "import": "./dist/transport/index.js",
       "require": "./dist/transport/index.cjs"
+    },
+    "./ble": {
+      "types": "./dist/ble/index.d.ts",
+      "import": "./dist/ble/index.js",
+      "require": "./dist/ble/index.cjs"
+    },
+    "./security": {
+      "types": "./dist/security/index.d.ts",
+      "import": "./dist/security/index.js",
+      "require": "./dist/security/index.cjs"
+    },
+    "./react-native-ble": {
+      "types": "./dist/react-native-ble/index.d.ts",
+      "import": "./dist/react-native-ble/index.js",
+      "require": "./dist/react-native-ble/index.cjs"
     }
   },
   "files": [
@@ -37,6 +52,9 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "valtio": "^2.2.0",
     "yaml": "^2.8.3"
   },

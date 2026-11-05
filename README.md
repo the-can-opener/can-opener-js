@@ -290,8 +290,47 @@ are rejected, because CANable 1 firmware ignores those commands silently.
 `examples/slcan-web` is a small page that connects a CANable and runs the Nissan
 Versa profile through this transport. `npm run dev:slcan` starts it.
 
-Real BLE transports can implement `VehicleTransport` by mapping these methods onto the
-firmware characteristics:
+### Can Opener SE over BLE
+
+`CanOpenerBleTransport` (`can-opener-js/ble`) speaks the
+[BLE Transport Protocol](docs/can-opener-se-ble-protocol.md): requests,
+CAN FD payloads, batches, monitoring, and bus timing. It does not depend on a
+BLE stack. The app connects the adapter, discovers services, and passes the
+transport a `CanOpenerGattLink`. `can-opener-js/react-native-ble` provides one
+for react-native-ble-plx:
+
+```ts
+import { Platform } from "react-native";
+import { BleManager } from "react-native-ble-plx";
+import { CanOpenerBleTransport } from "can-opener-js/ble";
+import { bleplxGattLink, bleplxSecurityWritePolicy } from "can-opener-js/react-native-ble";
+import { credentialAuthorizer } from "can-opener-js/security";
+
+const ble = new BleManager();
+const device = await ble.connectToDevice(deviceId, { requestMTU: 247 });
+await device.discoverAllServicesAndCharacteristics();
+
+const transport = new CanOpenerBleTransport(bleplxGattLink(ble, device.id), {
+  authorize: credentialAuthorizer(credentialStore),
+  securityWritePolicy: bleplxSecurityWritePolicy(Platform.OS === "android" ? "android" : "ios"),
+  subscribeSettleMs: Platform.OS === "android" ? 80 : 0,
+});
+```
+
+The adapter rejects vehicle notifications until the phone proves a key on the
+security characteristic, so `authorize` runs inside `connect()` before they are
+enabled. `credentialStore` is the app's `CredentialStore`: it lists the keys
+saved for adapters and saves what authentication reports, such as a redeemed
+guest invite. `can-opener-js/security` also covers claiming an adapter
+(`withSecuritySession(link, (session) => session.claim(seed))`), backup codes,
+invite links, and guest management through `transport.accessSession`.
+
+The firmware matches replies by sequence byte only. When another client shares
+the link, such as an iOS Siri extension using `0x80`-`0xFF`, give each one a
+disjoint `sequenceRange`; the default is `0x00`-`0x7F`.
+
+Other transports implement `VehicleTransport` the same way. `CanOpenerBleTransport`
+maps its methods onto the firmware characteristics:
 
 - `sendRequest()` maps to the Request characteristic. Actions use
   `expectCanResponse: false`; PID and diagnostic reads use
@@ -372,7 +411,8 @@ subscription registration, and incoming CAN frames.
 
 ## Out of scope for v1
 
-- Web Bluetooth or Node BLE transport.
+- BLE link adapters other than react-native-ble-plx. Web Bluetooth or Node BLE
+  only need a `CanOpenerGattLink`; `CanOpenerBleTransport` stays the same.
 - ISO-TP assembly/disassembly, which should remain firmware-side.
 - React bindings. The core uses `valtio/vanilla`, so a React entry point can be
   added without changing the vehicle model.
