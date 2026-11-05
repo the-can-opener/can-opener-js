@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanFrame, CanPayload } from "../src/dbc/types.js";
 import { CanTransmitError, NoEcuResponseError } from "../src/errors.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
+import { CapabilityRegistry } from "../src/profile/CapabilityRegistry.js";
+import { ProfileLoader } from "../src/profile/ProfileLoader.js";
 import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import type { VehicleRequest, VehicleTransport } from "../src/transport/types.js";
@@ -135,6 +137,137 @@ describe("VirtualVehicle.action", () => {
       expectCanResponse: false,
     });
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
+  });
+
+  it("runs a present-tense command and records its value unchanged", async () => {
+    const transport = new MockTransport();
+    const car = await new VirtualVehicleManager().connect({
+      id: "car-a",
+      transport,
+      profiles: [{
+        ...testVehicleProfile,
+        content: `version: 1
+
+endpoints:
+  body:
+    request_id: 200
+    response_id: 201
+
+actions:
+  TRUNK:
+    endpoint: body
+    values:
+      open:
+        send: [0x01]
+        expect: [0x41]
+      close:
+        send: [0x02]
+        expect: [0x42]
+  DOORS:
+    endpoint: body
+    values:
+      lock:
+        send: [0x03]
+      unlock:
+        send: [0x04]
+`,
+      }],
+    });
+    const frame = (first: number) => ({ canId: 200, data: Uint8Array.from([first, 0, 0, 0, 0, 0, 0, 0]) });
+    transport.scriptPidResponse(frame(0x01), Uint8Array.from([0x41]));
+    transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x00]));
+
+    await expect(car.action("TRUNK", { value: "open" })).resolves.toBe(true);
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]).toMatchObject({ signalName: "TRUNK.open" });
+    expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
+    expect(car.state.get("TRUNK")).toBe("open");
+
+    // A rejected request leaves the recorded value alone.
+    await expect(car.action("TRUNK.close")).resolves.toBe(false);
+    expect(car.state.get("TRUNK")).toBe("open");
+
+    transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x42]));
+    await expect(car.action("TRUNK", { value: "close" })).resolves.toBe(true);
+    expect(car.state.get("TRUNK")).toBe("close");
+
+    await expect(car.action("DOORS", { value: "lock" })).resolves.toBeUndefined();
+    expect(car.state.get("DOORS")).toBe("lock");
+    await expect(car.action("DOORS.unlock")).resolves.toBeUndefined();
+    expect(car.state.get("DOORS")).toBe("unlock");
+
+    await expect(car.action("TRUNK", { value: "ajar" })).rejects.toThrow(/Unknown vehicle action: TRUNK\.ajar/u);
+  });
+
+  it("encodes numeric action targets, enforces min/max bounds, and updates state with the number", async () => {
+    const transport = new MockTransport();
+    const profileSource: VehicleProfileSource = {
+      ...testVehicleProfile,
+      content: `version: 1.1
+
+endpoints:
+  climate:
+    request_id: 200
+    response_id: 201
+
+sequences:
+  prep:
+    steps:
+      - send: [0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00]
+        expect: [0x50, 0x81]
+
+actions:
+  CABIN_TEMP_SETPOINT:
+    endpoint: climate
+    encode:
+      byte: 4
+      scale: 0.5
+      offset: -40
+      min: 16
+      max: 32
+      step: 0.5
+    steps:
+      - ref: sequences.prep
+      - send: [0x04, 0x2E, 0x12, 0x34, 0x00, 0x00, 0x00, 0x00]
+        expect: [0x6E, 0x12, 0x34]
+  HORN:
+    endpoint: climate
+    send: [0x01]
+`,
+    };
+    const car = await new VirtualVehicleManager().connect({
+      id: "car-a",
+      transport,
+      profiles: [profileSource],
+    });
+    const registry = new CapabilityRegistry();
+    registry.load(new ProfileLoader().load([profileSource]));
+    expect(registry.actionInput("CABIN_TEMP_SETPOINT")).toEqual({ min: 16, max: 32, step: 0.5 });
+    expect(registry.actionInput("HORN")).toBeUndefined();
+    const prepFrame = { canId: 200, data: Uint8Array.from([0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00]) };
+    // 22.5 C -> round((22.5 - (-40)) / 0.5) = 125 (0x7D)
+    const set225Frame = { canId: 200, data: Uint8Array.from([0x04, 0x2E, 0x12, 0x34, 0x7D, 0x00, 0x00, 0x00]) };
+    // 20 C -> round((20 - (-40)) / 0.5) = 120 (0x78)
+    const set20Frame = { canId: 200, data: Uint8Array.from([0x04, 0x2E, 0x12, 0x34, 0x78, 0x00, 0x00, 0x00]) };
+    transport.scriptPidResponse(prepFrame, Uint8Array.from([0x50, 0x81]));
+    transport.scriptPidResponse(set225Frame, Uint8Array.from([0x6E, 0x12, 0x34]));
+    transport.scriptPidResponse(set20Frame, Uint8Array.from([0x7F, 0x2E, 0x31]));
+
+    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 22.5 })).resolves.toBe(true);
+    expect(transport.requests).toHaveLength(2);
+    expect(transport.requests[0]?.txFrame.data).toEqual(prepFrame.data);
+    expect(transport.requests[1]?.txFrame.data).toEqual(set225Frame.data);
+    expect(car.state.get<number>("CABIN_TEMP_SETPOINT")).toBe(22.5);
+
+    // A rejected response leaves the previous numeric target intact.
+    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 20 })).resolves.toBe(false);
+    expect(car.state.get<number>("CABIN_TEMP_SETPOINT")).toBe(22.5);
+
+    // Out-of-bounds, missing value, or numeric target on a trigger action are rejected.
+    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 15 })).rejects.toThrow(/below minimum 16/u);
+    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 33 })).rejects.toThrow(/exceeds maximum 32/u);
+    await expect(car.action("CABIN_TEMP_SETPOINT")).rejects.toThrow(/requires a numeric target value/u);
+    await expect(car.action("HORN", { value: 22 })).rejects.toThrow(/does not accept a numeric value/u);
   });
 
   it("sends actions that declare inline request_id values", async () => {

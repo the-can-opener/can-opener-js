@@ -58,6 +58,21 @@ interface ResolvedSubscriptionRequest {
   normalize?: ProfileValueNormalization;
 }
 
+/** Command for a stateful profile entity, e.g. `{ value: "close" }` for `TRUNK` or `{ value: 22 }` for `CABIN_TEMP_SETPOINT`. */
+export interface ProfileActionTarget {
+  value: string | number;
+}
+
+function isProfileActionTarget(
+  opts: ProfileActionTarget | ActionOptions,
+): opts is ProfileActionTarget {
+  return (
+    (typeof opts.value === "string" ||
+      (typeof opts.value === "number" && Number.isFinite(opts.value))) &&
+    Object.keys(opts).length === 1
+  );
+}
+
 export class VirtualVehicle {
   private busTimingQueue: Promise<unknown> = Promise.resolve();
 
@@ -198,13 +213,28 @@ export class VirtualVehicle {
     this.internals.busActivity.wake();
   }
 
+  /** Runs a profile trigger (`HORN`) or a fully named value action (`TRUNK.close`). */
   async action(actionName: string): Promise<ActionRunResult>;
+  /** Runs a present-tense command: `action("DOORS", { value: "lock" })` runs `DOORS.lock`. */
+  async action(entity: string, target: ProfileActionTarget): Promise<ActionRunResult>;
+  /** Encodes and sends a raw DBC frame signal; only without loaded profiles. */
   async action(signalName: string, opts: ActionOptions): Promise<void>;
-  async action(name: string, opts?: ActionOptions): Promise<ActionRunResult | void> {
+  async action(
+    name: string,
+    opts?: ProfileActionTarget | ActionOptions,
+  ): Promise<ActionRunResult | void> {
     if (this.internals.capabilities.hasProfiles()) {
-      if (opts !== undefined) {
+      if (opts !== undefined && !isProfileActionTarget(opts)) {
         throw new VirtualVehicleError(
           `Profile action ${name} does not accept raw frame action options`,
+        );
+      }
+      const action = opts === undefined
+        ? this.internals.capabilities.resolveAction(name)
+        : this.internals.capabilities.resolveActionTarget(name, opts.value);
+      if (opts === undefined && action.input !== undefined) {
+        throw new VirtualVehicleError(
+          `Action ${name} requires a numeric target value`,
         );
       }
       // Background queries would otherwise queue up on the transport and the
@@ -214,12 +244,16 @@ export class VirtualVehicle {
       this.internals.queries.holdPolling();
       try {
         const wakeFirst = this.internals.busActivity.isAwake() === false;
-        const result = await this.internals.actions.run(
-          this.internals.capabilities.resolveAction(name),
-          { wakeFirst },
-        );
+        const result = await this.internals.actions.run(action, { wakeFirst });
         if (result === true || result === undefined) {
           this.internals.busActivity.recordActivity();
+        }
+        // Record the profile's target unchanged. The library does not
+        // interpret vocabulary; a monitor or query for the same entity
+        // overwrites it with what the vehicle reports.
+        const targetValue = opts !== undefined ? opts.value : action.value;
+        if (result !== false && action.entity !== undefined && targetValue !== undefined) {
+          this.state.update(action.entity, targetValue);
         }
         return result;
       } finally {

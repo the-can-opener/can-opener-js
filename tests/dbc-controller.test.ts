@@ -59,6 +59,8 @@ describe("DbcController", () => {
     expect(dbc.resolveMessageSignal("OBD_Response_7E8", "SPEED")).toMatchObject({
       name: "SPEED",
       canId: 2024,
+      minimum: 0,
+      maximum: 255,
     });
     expect(dbc.decodeMessageSignal("OBD_Response_7E8", "SPEED", Uint8Array.of(0, 0x41, 0x0d, 88, 0, 0, 0, 0))).toBe(88);
   });

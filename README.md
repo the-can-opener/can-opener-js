@@ -110,7 +110,9 @@ legacy tests. In profile-backed vehicles, executable names come from YAML
 `queries`, `actions`, and `signals` declarations.
 
 See the [Vehicle Profile and Library Specification](docs/vehicle-profile-spec.md)
-for YAML profiles, DBC files, capabilities, and the library contract. See the
+for YAML profiles, DBC files, capabilities, and the library contract, and
+[Vehicle Keywords](docs/vehicle-keywords.md) for the common capability names
+profiles should use. See the
 [BLE Transport Protocol](docs/can-opener-se-ble-protocol.md) and
 [Security Protocol](docs/can-opener-se-security-protocol.md) when implementing
 an app for current Can Opener SE firmware.
