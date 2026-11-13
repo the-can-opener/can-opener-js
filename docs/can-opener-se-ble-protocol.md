@@ -935,7 +935,10 @@ application needs them.
 
 ## 17. Mapping to can-opener-js
 
-A Can Opener SE `VehicleTransport` maps:
+`CanOpenerBleTransport` from `can-opener-js/ble` implements this mapping over a
+`CanOpenerGattLink`, the small write/subscribe/disconnect interface a BLE stack
+adapter provides (`can-opener-js/react-native-ble` ships one for
+react-native-ble-plx). It maps:
 
 - `VehicleRequest.txFrame.bus` to the v2 bus byte
 - `VehicleRequest.txFrame.canId` to transmit CAN ID
@@ -958,5 +961,12 @@ A Can Opener SE `VehicleTransport` maps:
 The transport must return the reassembled application payload, not the
 `0xFEF4` envelope and not ISO-TP PCI bytes.
 
-The transport is also responsible for security credentials and authorization,
-because the generic library does not define credential storage or BLE pairing.
+Authorization on `0xA005` must finish before the transport enables the vehicle
+notifications. Pass `authorize: credentialAuthorizer(store)` from
+`can-opener-js/security`: it proves one of the keys in the app's
+`CredentialStore`, saves what the adapter reported, and waits for the OS
+pairing to finish. The app still owns credential storage; a
+`SecurityWritePolicy` (for example `bleplxSecurityWritePolicy`) covers the
+platform-specific pairing errors. Claiming a new adapter and managing guests
+use `SecuritySession` through `withSecuritySession` or the transport's
+`accessSession`.
