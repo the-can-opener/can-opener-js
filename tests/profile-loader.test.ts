@@ -214,15 +214,42 @@ actions:
     expect(profile.actions[3]).not.toHaveProperty("entity");
   });
 
-  it("accepts spec versions 1 and 1.1 and rejects others", () => {
-    const load = (version: string) => () => new ProfileLoader().load([
+  it("loads format 1 and 1.1 and skips every other profile version", () => {
+    const load = (version: string) => new ProfileLoader().load([
       { name: "test/version/profile.yaml", content: `version: ${version}\n`, dbcFiles: [] },
     ]);
 
-    expect(load("1")).not.toThrow();
-    expect(load("1.1")).not.toThrow();
-    expect(load("2")).toThrow(/version: 1 or 1\.1/u);
-    expect(load("\"1.1\"")).toThrow(/version: 1 or 1\.1/u);
+    expect(load("1")).toHaveLength(1);
+    expect(load("1.1")).toHaveLength(1);
+    expect(load("\"1.1\"")).toHaveLength(1);
+    expect(load("2")).toEqual([]);
+
+    const profiles = new ProfileLoader().load([
+      {
+        name: "future/profile.yaml",
+        content: "version: 2\nactions:\n  HORN:\n    send: [0x01]\n",
+        dbcFiles: [],
+      },
+      {
+        name: "current/profile.yaml",
+        content: "version: \"1.1\"\nactions:\n  WIPERS:\n    send: [0x02]\n",
+        dbcFiles: [],
+      },
+      {
+        name: "original/profile.yaml",
+        content: "version: 1\nactions:\n  LIGHTS:\n    send: [0x03]\n",
+        dbcFiles: [],
+      },
+    ]);
+
+    expect(profiles.map((profile) => profile.name)).toEqual([
+      "current/profile.yaml",
+      "original/profile.yaml",
+    ]);
+    expect(profiles.flatMap((profile) => profile.actions.map((action) => action.name))).toEqual([
+      "WIPERS",
+      "LIGHTS",
+    ]);
   });
 
   it("rejects malformed value branches", () => {

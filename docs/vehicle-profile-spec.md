@@ -184,7 +184,7 @@ The current library accepts `version: 1` (spec 1.0) and `version: 1.1`. A
 profile that uses 1.1 features, such as `values` on an action, should declare
 `version: 1.1` so that a 1.0 loader rejects it instead of silently dropping
 those actions. Minor versions are backward compatible: a 1.1 loader reads a
-1.0 profile unchanged.
+1.0 profile unchanged. Any other `version` is skipped and not loaded.
 
 ### 5.1 Applicability metadata
 

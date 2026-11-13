@@ -100,6 +100,34 @@ interface RawAction {
  */
 export const SUPPORTED_PROFILE_VERSIONS: ReadonlySet<number> = new Set([1, 1.1]);
 
+/** `1` and `1.0` are spec 1.0. `1.1` is the only other format this loader reads. */
+export function normalizeProfileFormatVersion(version: unknown): number | null {
+  if (version === 1 || version === "1" || version === "1.0") return 1;
+  if (version === 1.1 || version === "1.1") return 1.1;
+  if (typeof version === "number" && Number.isFinite(version)) return version;
+  if (typeof version === "string" && /^\d+(?:\.\d+)?$/.test(version.trim())) {
+    const numeric = Number(version.trim());
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
+}
+
+export function isSupportedProfileFormatVersion(version: number | null): boolean {
+  return version === 1 || version === 1.1;
+}
+
+/** Reads the YAML `version` field. Returns null when the file cannot be read. */
+export function readProfileFormatVersion(content: string): number | null {
+  let raw: unknown;
+  try {
+    raw = parse(content);
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return normalizeProfileFormatVersion((raw as { version?: unknown }).version);
+}
+
 /** Separates an entity from its command in an action name: `DOORS.lock`. */
 export const ACTION_VALUE_SEPARATOR = ".";
 
@@ -119,7 +147,20 @@ type RawStep = {
 
 export class ProfileLoader {
   load(sources: readonly VehicleProfileSource[]): LoadedVehicleProfile[] {
-    return sources.map((source) => this.loadOne(source));
+    const loaded: LoadedVehicleProfile[] = [];
+    for (const source of sources) {
+      const version = readProfileFormatVersion(source.content);
+      // Leave every other format untouched. One future profile must not
+      // stop the profiles this loader does understand from loading.
+      if (version !== null && !isSupportedProfileFormatVersion(version)) {
+        console.warn(
+          `Skipping vehicle profile ${source.name}: version ${version} is not loaded. Supported versions are 1 and 1.1.`,
+        );
+        continue;
+      }
+      loaded.push(this.loadOne(source));
+    }
+    return loaded;
   }
 
   private loadOne(source: VehicleProfileSource): LoadedVehicleProfile {
@@ -127,7 +168,7 @@ export class ProfileLoader {
     if (raw === undefined || typeof raw !== "object") {
       throw new VirtualVehicleError(`Profile ${source.name} must contain a YAML object`);
     }
-    if (!SUPPORTED_PROFILE_VERSIONS.has(raw.version as number)) {
+    if (!isSupportedProfileFormatVersion(normalizeProfileFormatVersion(raw.version))) {
       throw new VirtualVehicleError(`Profile ${source.name} must declare version: 1 or 1.1`);
     }
 
