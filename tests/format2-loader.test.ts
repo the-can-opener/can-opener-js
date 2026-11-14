@@ -3,7 +3,7 @@ import type { CanPayload } from "../src/dbc/types.js";
 import { NoEcuResponseError, VirtualVehicleError } from "../src/errors.js";
 import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { parsePackageYaml } from "../src/profile/loaders/format2.js";
-import { ProfileLoader } from "../src/profile/ProfileLoader.js";
+import { ProfileLoader, readProfileSource } from "../src/profile/ProfileLoader.js";
 import type { VssValue } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import type { VehicleRequest } from "../src/transport/types.js";
@@ -383,6 +383,7 @@ describe("format 2 loader", () => {
     };
 
     expect(new ProfileLoader().load([dependent])).toEqual([]);
+    expect(readProfileSource(dependent)?.id).toBe("org.example.dependent");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("depends on org.canopener.universal.obd"));
     expect(
       new ProfileLoader().load([universalObdPackage.source, dependent]).map((profile) => profile.id),

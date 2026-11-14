@@ -22,6 +22,17 @@ export {
  * `manifest: 1` package is format 2, the default. A `version: 1` or `1.1`
  * profile is format 1 and is mapped onto VSS paths with the spec vocabulary.
  */
+/**
+ * Parses one source and applies its allow-list. Unlike {@link ProfileLoader.load},
+ * this still returns a package whose `depends` entry is not loaded yet, so a
+ * caller can read the actions and queries an add-on declares.
+ */
+export function readProfileSource(source: VehicleProfileSource): LoadedVehicleProfile | undefined {
+  const profile = loadSource(source);
+  if (profile === undefined) return undefined;
+  return applyAllowedKeys(profile, source.allowedKeys);
+}
+
 export class ProfileLoader {
   load(sources: readonly VehicleProfileSource[]): LoadedVehicleProfile[] {
     const loaded: LoadedVehicleProfile[] = [];
