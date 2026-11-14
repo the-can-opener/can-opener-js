@@ -510,7 +510,9 @@ The address byte takes one data byte from every frame:
 - a classic single frame carries 6 application bytes instead of 7, so `send`
   may hold at most 7 bytes after the address is added (trailing zero padding
   may be dropped);
-- a first frame carries `tx_dl - 3` and a consecutive frame `tx_dl - 2`;
+- a first frame carries `tx_dl - 3` application bytes for a 12-bit length
+  and `tx_dl - 7` when the 32-bit length is used, and a consecutive frame
+  carries `tx_dl - 2`;
 - a CAN FD `tx_dl` 64 single frame carries 61 bytes, laid out as
   `address 00 length payload`;
 - flow control is `address 30 BS STmin`, padded to the frame size.
@@ -555,7 +557,9 @@ Request payloads longer than one classic single frame (7 application bytes,
 or 6 on an endpoint with ISO-TP extended or mixed addressing) are not
 expressible through the current profile and `VehicleRequest` API, including
 on CAN FD endpoints. Responses of any length up to the transport limit are
-reassembled.
+reassembled. Can Opener SE reassembles through 65535 bytes. A first frame
+whose 12-bit length is zero carries a 32-bit length for 4096 through 65535
+bytes; a longer length is overflow.
 
 ### 9.1 Probing CAN FD vehicles
 

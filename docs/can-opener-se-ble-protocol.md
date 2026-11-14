@@ -163,9 +163,9 @@ With flag `0x20`:
   both 11-bit and 29-bit IDs. The `response_id - 8` rule of section 7.1 does
   not apply.
 - The address byte takes one byte from every frame: a classic single frame
-  carries 6 application bytes, a first frame `tx_dl - 3`, a consecutive frame
-  `tx_dl - 2`, and a `tx_dl` 64 single frame 61 bytes laid out as
-  `tx_address 00 length payload`.
+  carries 6 application bytes, a 12-bit first frame `tx_dl - 3`, a 32-bit
+  first frame `tx_dl - 7`, a consecutive frame `tx_dl - 2`, and a `tx_dl` 64
+  single frame 61 bytes laid out as `tx_address 00 length payload`.
 
 The flag is valid only on layouts with a bus byte. A legacy packet with flag
 `0x20` returns `0xE1`. Firmware older than this document ignores the flag and
@@ -288,10 +288,25 @@ The firmware handles:
 
 - single-frame responses
 - first and consecutive frames
-- flow-control CTS
+- flow-control CTS and overflow
 - UDS response pending, `7F service 78`
-- responses up to 4095 application bytes
+- responses through 65535 application bytes, including the 32-bit length above 4095
 - BLE response fragmentation
+
+A 12-bit first-frame length carries up to 4095 bytes. A longer message uses a
+zero 12-bit length and a 32-bit length. The firmware reassembles 4096 through
+65535 bytes, which is the largest length a 16-bit BLE fragment offset can
+address. A 32-bit length above 65535 returns `0xE6` with an empty payload,
+after an overflow flow-control frame (`0x32`, block size 0, STmin 0) so the
+sender stops. A zero 12-bit length that does not encode a length above 4095
+returns `0xE5` with an empty payload, after the same overflow flow-control
+frame.
+
+A consecutive frame still on the bus before a single frame or first frame of
+this exchange is ignored; the firmware keeps waiting. Once a first frame has
+been accepted, a frame that is not the next consecutive frame returns `0xE5`
+immediately, also with an empty payload. The firmware does not skip that
+frame and continue.
 
 For a multi-frame standard 11-bit response, the firmware sends flow control to
 `matched_response_id - 8`. This matches standard OBD-II addressing, such as
@@ -321,7 +336,7 @@ instead of a ready-to-send classic CAN frame.
 [7..10]   response_id_start:u32
 [11..14]  response_id_end:u32
 [15..16]  timeout_ms:u16
-[17..18]  payload_length:u16, 1 through 4095
+[17..18]  payload_length:u16, 1 through 65535
 [19..]    application_payload
 ```
 
@@ -329,7 +344,7 @@ When `19 + payload_length` fits in one 244-byte BLE write, the write carries
 the entire payload and the firmware runs the ISO-TP exchange immediately.
 
 When `19 + payload_length` exceeds one 244-byte BLE write (`payload_length` up
-to 4095 bytes), the first write carries the header plus the first slice of
+to 65535 bytes), the first write carries the header plus the first slice of
 `application_payload`, and the remaining bytes follow in consecutive writes
 for the same `sequence`:
 
@@ -342,12 +357,19 @@ for the same `sequence`:
 
 As soon as `fragment_offset + chunk_length == payload_length`, the firmware
 transmits the full ISO-TP request on CAN and returns the request notification
-for `sequence`. A `payload_length` above 4095 returns `0xE6`; a zero length or
-an out-of-order `fragment_offset` aborts the transfer and returns `0xE1`.
+for `sequence`. A zero length or an out-of-order `fragment_offset` aborts the
+transfer and returns `0xE1`. The length field is 16 bits, so 65535 is the
+largest request the packet can name, and that length fits the staging buffer.
 
-The firmware adds ISO-TP PCI, segments long requests, obeys ECU flow control,
-supports block size and STmin, and optionally waits for a reassembled
-response. Set flag `0x01` when a response is expected.
+The firmware adds the ISO-TP PCI and segments the payload. A payload that fits
+in one single frame is sent as one frame. Up to 4095 bytes, a longer payload
+is a first frame with a 12-bit length, carrying 6 application bytes on classic
+CAN. From 4096 through 65535 bytes the first frame uses a zero 12-bit length
+and a 32-bit length, carrying 2 application bytes on classic CAN. Consecutive
+frames follow. Flag `0x20` shortens every frame by the address byte (section
+5.1). The firmware obeys ECU flow control, including block size and STmin, and
+optionally waits for a reassembled response. An ECU flow-control overflow
+returns `0xE6`. Set flag `0x01` when a response is expected.
 
 With flag `0x20` the two address bytes of section 5.1 follow `bus`, every
 later field moves back by two, and a single-write packet has length
@@ -365,7 +387,7 @@ control and reply frames only when they start with `rx_address`.
 [9..12]   response_id_start:u32
 [13..16]  response_id_end:u32
 [17..18]  timeout_ms:u16
-[19..20]  payload_length:u16, 1 through 4095
+[19..20]  payload_length:u16, 1 through 65535
 [21..]    application_payload
 ```
 
@@ -393,7 +415,7 @@ Set flags `0x08 | 0x40`. One byte is inserted after the timeout:
 [11..14]  response_id_end:u32
 [15..16]  timeout_ms:u16
 [17]      tx_dl, 8 or 64
-[18..19]  payload_length:u16, 1 through 4095
+[18..19]  payload_length:u16, 1 through 65535
 [20..]    application_payload, without PCI
 ```
 
@@ -408,8 +430,10 @@ The firmware pads every frame it sends, including flow control, with `0x00` to
 - `tx_dl` 8 uses the classic PCI in an 8-byte FD frame. `02 01 0D` is sent as
   `02 01 0D 00 00 00 00 00`.
 - `tx_dl` 64 uses ISO 15765-2:2016. A payload of up to 62 bytes is one frame
-  `00 LL` followed by the payload. A longer payload is a first frame with 62
-  data bytes and consecutive frames with 63.
+  `00 LL` followed by the payload. A longer payload up to 4095 bytes is a
+  first frame with 62 data bytes. A payload of 4096 through 65535 bytes is a
+  first frame with a zero 12-bit length and a 32-bit length, carrying 58 data
+  bytes. Consecutive frames carry 63 data bytes.
 
 The firmware sets the bit-rate switch bit only when the bus data bitrate is
 non-zero and differs from the nominal bitrate. Configure the bus first with
@@ -417,10 +441,13 @@ monitor opcode `0x08` (section 11.6). With data bitrate `0`, the request is
 FD format at the nominal rate, and an ECU that expects bit-rate switch may not
 decode it.
 
-Replies are parsed by their decoded frame length. A frame of 8 bytes or less
-uses the classic PCI, FD or not. A longer frame uses the 2016 layout. The
-notification payload is the reassembled application payload without PCI, as
-for classic requests.
+Replies are parsed by their decoded frame length, with the length and sequence
+rules in section 7.1. A frame of 8 bytes or less uses the classic PCI, FD or
+not. A longer frame uses the 2016 layout: a single frame is `00 LL` followed
+by the payload, a first frame keeps the 12-bit length and carries `length - 2`
+data bytes (`length - 6` when the 12-bit length is zero and the 32-bit length
+follows), and a consecutive frame carries `length - 1` data bytes. The
+notification payload is the reassembled application payload without PCI.
 
 Example, OBD-II speed on bus 0 with `tx_dl` 64:
 
@@ -497,7 +524,8 @@ Batch limits:
 - at most 244 total BLE bytes
 - one logical bus
 - at most 30,000 ms total of response timeouts and post-step delays
-- at most 4095 bytes in the combined result
+- at most 65535 bytes in the combined result; a step whose response would
+  not fit is reported as `0xE6` with an empty payload
 
 The firmware validates the entire packet before transmitting a step. DLC,
 length, ID, bus, step count, and budget errors reject the whole batch.
@@ -565,8 +593,14 @@ Request statuses:
 - `0xE2`: invalid DLC
 - `0xE3`: CAN transmit failed
 - `0xE4`: CAN response timeout
-- `0xE5`: invalid ISO-TP exchange
-- `0xE6`: ISO-TP payload overflow
+- `0xE5`: invalid ISO-TP exchange. This includes a zero 12-bit first-frame
+  length that does not encode a length above 4095, and a consecutive frame
+  whose sequence number is not the next expected value. The payload is empty.
+- `0xE6`: ISO-TP payload overflow. This includes a 32-bit response length
+  above 65535, a v4 step whose response would push the combined result past
+  65535 bytes, and an ECU flow-control overflow. The payload is empty. A
+  response longer than 65535 is answered with an overflow flow-control frame
+  before this status.
 - `0xE7`: invalid CAN ID or range
 - `0xE8`: invalid or unavailable bus
 - `0xE9`: request queue busy
@@ -583,7 +617,7 @@ When response flag `0x02` is set, payload begins with:
 
 Reassemble fragments by sequence and offset. Complete the response when a
 fragment arrives without flag `0x04`. Validate overlaps, gaps, and the
-4095-byte maximum before returning the payload.
+65535-byte maximum before returning the payload.
 
 The `payload_length` field describes bytes in that BLE notification, including
 the two-byte offset when fragmented.
@@ -787,7 +821,8 @@ Current firmware implements:
 - logical bus `1`
 - classic CAN request payloads up to eight bytes
 - CAN FD diagnostic requests and replies with `tx_dl` 8 or 64 (section 8.1)
-- ISO-TP application requests and responses up to 4095 bytes
+- ISO-TP application requests and responses up to 65535 bytes, including
+  messages that use the 32-bit ISO-TP length
 - multi-write v3 ISO-TP requests across 244-byte BLE writes (section 8)
 
 Monitor and capture records carry at most 8 data bytes. A longer FD frame on
@@ -914,6 +949,11 @@ shapes and outcomes:
 - request flag `0x20` adds ISO-TP extended or mixed addressing; older
   firmware ignores the flag and misreads the two-byte-longer layouts
   (usually `0xE1`)
+- ISO-TP messages longer than 4095 bytes use a zero 12-bit first-frame length
+  and a 32-bit length. Older firmware returns `0xE5` for that first frame and
+  `0xE6` for a v3 `payload_length` above 4095. A consecutive-frame sequence
+  error returns `0xE5` immediately; older firmware skipped the unexpected
+  frame and kept waiting.
 - v4 carries classic CAN batches
 - monitor opcode `0x04` enables BLE capture-all
 - monitor opcode `0x05` enables Wi-Fi Aware
