@@ -1,6 +1,8 @@
 import type { DbcController } from "../dbc/DbcController.js";
 import type { CanPayload, PollingOptions, QuerySubscriptionHandle } from "../dbc/types.js";
+import { VirtualVehicleError } from "../errors.js";
 import type { CapabilityRegistry } from "../profile/CapabilityRegistry.js";
+import { decodeField } from "../profile/decode.js";
 import { isotpAddressingFields } from "../profile/isotpAddressing.js";
 import { applyValueNormalization } from "../profile/normalize.js";
 import {
@@ -9,9 +11,10 @@ import {
   buildRequestFrame,
   canFdRequestFields,
   responseBounds,
+  responseData,
   stripExpectedPrefix,
 } from "../profile/RequestBuilder.js";
-import type { ProfileQuery, QueryDecoder } from "../profile/types.js";
+import type { ProfileQuery } from "../profile/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { BusActivityMonitor } from "../vehicle/BusActivityMonitor.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
@@ -44,6 +47,9 @@ export class QueryController {
   ) {}
 
   async requestProfile(query: ProfileQuery): Promise<unknown> {
+    if (query.unavailable !== undefined) {
+      throw new VirtualVehicleError(`${query.name} is unavailable: ${query.unavailable}`);
+    }
     const endpoint = this.resolveEndpoint(query.endpoint);
     const frame = buildRequestFrame(endpoint, query.send);
     const timeoutMs = query.timeoutMs ?? endpoint.timeoutMs;
@@ -63,7 +69,9 @@ export class QueryController {
       this.busActivity?.recordActivity();
       assertExpectedResponse(query.expect, payload);
       const value = this.decodeProfileQuery(query, payload);
-      if (this.capabilities?.hasSignal(query.name) !== true) {
+      // A passive signal owns the state of its property, and an invalid
+      // observation publishes nothing.
+      if (value !== undefined && this.capabilities?.hasSignal(query.name) !== true) {
         this.state.update(query.name, value);
       }
       return value;
@@ -183,39 +191,44 @@ export class QueryController {
   }
 
   private decodeProfileQuery(query: ProfileQuery, payload: CanPayload): unknown {
-    if (query.decoder === undefined) {
+    const decoder = query.decoder;
+    if (decoder === undefined) {
       return applyValueNormalization(stripExpectedPrefix(query.expect, payload), query.normalize);
     }
-    const decoderPayload =
-      query.decoder.type === "dbc"
-        ? alignExpectedPrefix(query.expect, payload)
-        : stripExpectedPrefix(query.expect, payload);
-    return applyValueNormalization(
-      decodeProfilePayload(this.dbc, query.decoder, decoderPayload, query.length),
-      query.normalize,
-    );
-  }
-}
-
-function decodeProfilePayload(
-  dbc: DbcController,
-  decoder: QueryDecoder,
-  payload: CanPayload,
-  queryLength: number | undefined,
-): unknown {
-  switch (decoder.type) {
-    case "dbc":
-      return dbc.decodeMessageSignal(decoder.message, decoder.signal, payload);
-    case "ascii": {
-      const length = decoder.length ?? queryLength;
-      const bytes = length === undefined ? payload : payload.slice(0, length);
-      return new TextDecoder().decode(bytes).replace(/\0+$/u, "");
-    }
-    case "bytes":
-      return decoder.length === undefined ? payload : payload.slice(0, decoder.length);
-    default: {
-      const exhaustive: never = decoder;
-      return exhaustive;
+    switch (decoder.type) {
+      case "dbc": {
+        const aligned = alignExpectedPrefix(query.expect, payload);
+        return applyValueNormalization(
+          this.dbc.decodeMessageSignal(decoder.message, decoder.signal, aligned),
+          query.normalize,
+          this.dbc.resolveMessageSignal(decoder.message, decoder.signal).unit,
+        );
+      }
+      case "ascii": {
+        const stripped = stripExpectedPrefix(query.expect, payload);
+        const length = decoder.length ?? query.length;
+        const bytes = length === undefined ? stripped : stripped.slice(0, length);
+        return applyValueNormalization(new TextDecoder().decode(bytes).replace(/\0+$/u, ""), query.normalize);
+      }
+      case "bytes": {
+        const stripped = stripExpectedPrefix(query.expect, payload);
+        return applyValueNormalization(
+          decoder.length === undefined ? stripped : stripped.slice(0, decoder.length),
+          query.normalize,
+        );
+      }
+      case "frame":
+        return decodeField(responseData(query.expect, payload), decoder.decode);
+      case "outputs": {
+        const data = responseData(query.expect, payload);
+        return Object.fromEntries(
+          Object.entries(decoder.outputs).map(([name, decode]) => [name, decodeField(data, decode)]),
+        );
+      }
+      default: {
+        const exhaustive: never = decoder;
+        return exhaustive;
+      }
     }
   }
 }

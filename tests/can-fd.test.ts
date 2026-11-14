@@ -5,6 +5,8 @@ import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import { testVehicleDbc } from "./fixtures.js";
 
+const SPEED = "Vehicle.Speed";
+
 const FD_BUS = `bitrate: 500000
       data_bitrate: 2000000
       fd:
@@ -55,7 +57,7 @@ describe("CAN FD frame format resolution", () => {
     const { car, transport } = await connect(fdProfile("bitrate: 500000\n      data_bitrate: 2000000"));
     transport.scriptPidResponse(speedFrame(0x7df), Uint8Array.of(0x41, 0x0d, 42));
 
-    await expect(car.query<number>("SPEED")).resolves.toBe(42);
+    await expect(car.read<number>(SPEED)).resolves.toBe(42);
     expect(transport.requests[0]?.canFd).toBeUndefined();
     expect(transport.requests[0]?.txFrame.dlc).toBe(3);
   });
@@ -64,7 +66,7 @@ describe("CAN FD frame format resolution", () => {
     const { car, transport } = await connect(fdProfile(FD_BUS));
     transport.scriptPidResponse(speedFrame(0x7df), Uint8Array.of(0x41, 0x0d, 88));
 
-    await expect(car.query<number>("SPEED")).resolves.toBe(88);
+    await expect(car.read<number>(SPEED)).resolves.toBe(88);
     const request = transport.requests[0];
     expect(request?.canFd).toEqual({ txDl: 64, payload: Uint8Array.of(0x01, 0x0d) });
     expect(request?.txFrame.dlc).toBe(8);
@@ -86,8 +88,8 @@ describe("CAN FD frame format resolution", () => {
     endpoint: legacy
     send: [0x02, 0x3E, 0x00]`));
 
-    await car.action("PING_BCM");
-    await car.action("PING_LEGACY");
+    await car.invoke("PING_BCM");
+    await car.invoke("PING_LEGACY");
 
     expect(transport.requests[0]?.canFd).toEqual({ txDl: 8 });
     expect(transport.requests[0]?.txFrame.dlc).toBe(8);
@@ -102,8 +104,8 @@ describe("CAN FD frame format resolution", () => {
   HORN_CLASSIC:
     send: { request_id: 0x3F1, bus: 0, fd: false, request: [0x01, 0x02] }`));
 
-    await car.action("HORN");
-    await car.action("HORN_CLASSIC");
+    await car.alias.command("HORN");
+    await car.invoke("HORN_CLASSIC");
 
     expect(transport.requests[0]?.canFd).toEqual({ txDl: 8 });
     expect(transport.requests[0]?.txFrame.dlc).toBe(8);
@@ -121,7 +123,7 @@ describe("CAN FD frame format resolution", () => {
     const { car, transport } = await connect(universal, vehicle);
     transport.scriptPidResponse(speedFrame(0x7df), Uint8Array.of(0x41, 0x0d, 7));
 
-    await expect(car.query<number>("SPEED")).resolves.toBe(7);
+    await expect(car.read<number>(SPEED)).resolves.toBe(7);
     expect(transport.requests[0]?.canFd).toMatchObject({ txDl: 64 });
   });
 
@@ -135,7 +137,7 @@ describe("CAN FD frame format resolution", () => {
 describe("CAN FD on a classic bus", () => {
   it.each([
     ["an endpoint", `\n  bcm:\n    request_id: 0x7A0\n    fd: { tx_dl: 8 }`, "", /Endpoint bcm sends CAN FD on bus 0/u],
-    ["an inline step", "", `\n  HORN:\n    send: { request_id: 0x3F1, fd: true, request: [0x01] }`, /Action HORN sends CAN FD on bus 0/u],
+    ["an inline step", "", `\n  HORN:\n    send: { request_id: 0x3F1, fd: true, request: [0x01] }`, /Action Vehicle\.Body\.Horn\.IsActive=true sends CAN FD on bus 0/u],
   ])("refuses to load %s that sends FD", async (_, endpoints, actions, error) => {
     const transport = new MockTransport();
 

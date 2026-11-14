@@ -9,6 +9,8 @@ import { universalPidProfile } from "./fixtures.js";
 
 const RPM_PID = 0x0c;
 const FUEL_LEVEL_PID = 0x2f;
+const RPM = "Vehicle.Powertrain.CombustionEngine.Speed";
+const FUEL_LEVEL = "Vehicle.Powertrain.FuelSystem.RelativeLevel";
 const BROADCAST_CAN_ID = 0x100;
 
 describe("bus activity", () => {
@@ -35,7 +37,7 @@ describe("bus activity", () => {
     vehicle.onBusActivityChange((next) => activity.push(next));
     transport.scriptPidError(obdRequestFrame(RPM_PID), new NoEcuResponseError());
 
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(vehicle.busActivity()).toBe("asleep");
@@ -49,7 +51,7 @@ describe("bus activity", () => {
   it("treats unacknowledged frames as a silent bus", async () => {
     transport.scriptPidError(obdRequestFrame(RPM_PID), new CanTransmitError());
 
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(vehicle.busActivity()).toBe("asleep");
@@ -59,7 +61,7 @@ describe("bus activity", () => {
     await transport.updateMonitor({ operation: "add", canIds: [BROADCAST_CAN_ID] });
     transport.scriptPidError(obdRequestFrame(RPM_PID), new NoEcuResponseError());
 
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     for (let second = 0; second < 20; second += 1) {
       transport.emitFrame(broadcastFrame());
       await vi.advanceTimersByTimeAsync(1000);
@@ -72,7 +74,7 @@ describe("bus activity", () => {
   });
 
   it("does not sleep on failures that came from an answering bus", async () => {
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(20_000);
 
     expect(vehicle.busActivity()).toBe("awake");
@@ -81,7 +83,7 @@ describe("bus activity", () => {
   it("resumes the round-robin when CAN traffic returns", async () => {
     await transport.updateMonitor({ operation: "add", canIds: [BROADCAST_CAN_ID] });
     transport.scriptPidError(obdRequestFrame(RPM_PID), new NoEcuResponseError());
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vehicle.busActivity()).toBe("asleep");
 
@@ -90,12 +92,12 @@ describe("bus activity", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(vehicle.busActivity()).toBe("awake");
-    expect(vehicle.state.get<number>("RPM")).toBe(3000);
+    expect(vehicle.state.get<number>(RPM)).toBe(3000);
   });
 
   it("resumes the round-robin on wakeBus", async () => {
     transport.scriptPidError(obdRequestFrame(RPM_PID), new NoEcuResponseError());
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vehicle.busActivity()).toBe("asleep");
 
@@ -103,13 +105,13 @@ describe("bus activity", () => {
     vehicle.wakeBus();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(vehicle.state.get<number>("RPM")).toBe(3100);
+    expect(vehicle.state.get<number>(RPM)).toBe(3100);
   });
 
   it("stops query subscriptions while the bus is asleep", async () => {
     transport.scriptPidError(obdRequestFrame(FUEL_LEVEL_PID), new NoEcuResponseError());
 
-    await vehicle.subscribeQuery("FUEL_LEVEL", { frequencyHz: 1 });
+    await vehicle.subscribeQuery(FUEL_LEVEL, { frequencyHz: 1 });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vehicle.busActivity()).toBe("asleep");
 
@@ -120,12 +122,12 @@ describe("bus activity", () => {
 
   it("still sends explicit queries while asleep and wakes on their reply", async () => {
     transport.scriptPidError(obdRequestFrame(RPM_PID), new NoEcuResponseError());
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vehicle.busActivity()).toBe("asleep");
 
     transport.scriptPidResponse(obdRequestFrame(RPM_PID), rpmResponse(vehicle, 3200));
-    await expect(vehicle.query<number>("RPM")).resolves.toBe(3200);
+    await expect(vehicle.read<number>(RPM)).resolves.toBe(3200);
 
     expect(vehicle.busActivity()).toBe("awake");
   });

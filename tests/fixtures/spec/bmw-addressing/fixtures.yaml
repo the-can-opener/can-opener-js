@@ -1,0 +1,18 @@
+fixture: 1
+cases:
+- label: VIN over extended addressing
+  kind: query
+  path: Vehicle.VehicleIdentification.VIN
+  responses:
+  - 62 F1 90 57 42 41 30 30 30 30 30 30 30 30 30 30 30 30 30 31
+  expect:
+    value: WBA00000000000001
+- label: Tester present acknowledged
+  kind: action
+  name: TESTER_PRESENT
+  responses:
+  - 7E 00
+  expect:
+    sent:
+    - 3E 00
+    result: acknowledged

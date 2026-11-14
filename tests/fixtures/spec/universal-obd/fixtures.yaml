@@ -1,0 +1,24 @@
+fixture: 1
+cases:
+- label: Speed query
+  kind: query
+  path: Vehicle.Speed
+  responses:
+  - 41 0D 32
+  expect:
+    value: 50
+- label: Wrong responder
+  kind: query
+  path: Vehicle.Speed
+  responses:
+  - id: 7E9
+    data: 41 0D 32
+  expect:
+    error: TIMEOUT
+- label: PID bitmap
+  kind: query
+  name: SUPPORTED_PIDS_01_20
+  responses:
+  - 41 00 00 00 00 01
+  expect:
+    value: '00000001'

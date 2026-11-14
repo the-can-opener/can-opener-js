@@ -1,0 +1,865 @@
+{
+  "ACCELERATOR_PEDAL": {
+    "note": "Accelerator pedal travel. 0 is not depressed and 100 is fully depressed. Throttle plate position is TPS.",
+    "path": "Vehicle.Chassis.Accelerator.PedalPosition",
+    "unit": "percent"
+  },
+  "ACTUAL_TORQUE": {
+    "note": "Current engine torque.",
+    "path": "Vehicle.Powertrain.CombustionEngine.Torque",
+    "unit": "Nm"
+  },
+  "ACTUATE_TRUNK_FRONT": {
+    "action": "ACTUATE_TRUNK_FRONT",
+    "legacy": true
+  },
+  "ACTUATE_TRUNK_REAR": {
+    "action": "ACTUATE_TRUNK_REAR",
+    "legacy": true
+  },
+  "ADD_CHARGE_SCHEDULE": {
+    "action": "ADD_CHARGE_SCHEDULE",
+    "legacy": true
+  },
+  "ADD_PRECONDITION_SCHEDULE": {
+    "action": "ADD_PRECONDITION_SCHEDULE",
+    "legacy": true
+  },
+  "AMBIENT_TEMP": {
+    "path": "Vehicle.Exterior.AirTemperature",
+    "unit": "Celsius"
+  },
+  "AUTO_CONDITIONING_START": {
+    "action": "AUTO_CONDITIONING_START",
+    "legacy": true
+  },
+  "AUTO_CONDITIONING_STOP": {
+    "action": "AUTO_CONDITIONING_STOP",
+    "legacy": true
+  },
+  "AUX_BATTERY_VOLTAGE": {
+    "note": "12 V low-voltage battery. OBD control-module voltage is MODULE_VOLTAGE.",
+    "path": "Vehicle.LowVoltageBattery.CurrentVoltage",
+    "unit": "V"
+  },
+  "BARO": {
+    "note": "COVESA OBD overlay, PID 33.",
+    "path": "Vehicle.OBD.BarometricPressure",
+    "unit": "kPa"
+  },
+  "BATTERY_LEVEL": {
+    "legacy": true,
+    "note": "Customer-displayed state of charge. Physical state of charge is StateOfCharge.Current.",
+    "path": "Vehicle.Powertrain.TractionBattery.StateOfCharge.Displayed",
+    "unit": "percent"
+  },
+  "BATTERY_RANGE": {
+    "legacy": true,
+    "note": "Battery-only remaining range.",
+    "path": "Vehicle.Powertrain.TractionBattery.Range",
+    "unit": "m"
+  },
+  "BOOST_PRESSURE": {
+    "reason": "Derived as MAP minus BARO; VSS has no separate boost-pressure signal."
+  },
+  "BRAKE_LIGHTS": {
+    "enum": {
+      "off": "INACTIVE",
+      "on": "ACTIVE"
+    },
+    "path": "Vehicle.Body.Lights.Brake.IsActive"
+  },
+  "BRAKE_PEDAL": {
+    "note": "Brake pedal travel. 0 is not depressed and 100 is fully depressed. Brake lamps are BRAKE_LIGHTS.",
+    "path": "Vehicle.Chassis.Brake.PedalPosition",
+    "unit": "percent"
+  },
+  "CABIN_TEMP": {
+    "path": "Vehicle.Cabin.HVAC.AmbientAirTemperature",
+    "unit": "Celsius"
+  },
+  "CABIN_TEMP_SETPOINT": {
+    "reason": "The station is not fixed. Use DRIVER_TEMP_SETTING or PASSENGER_TEMP_SETTING."
+  },
+  "CANCEL_SOFTWARE_UPDATE": {
+    "action": "CANCEL_SOFTWARE_UPDATE",
+    "legacy": true
+  },
+  "CHARGER": {
+    "enum": {
+      "connected": true,
+      "disconnected": false
+    },
+    "note": "Single charging port. Use a position instance instead of AnyPosition when the port location is known.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition.IsChargingCableConnected"
+  },
+  "CHARGER_CURRENT": {
+    "legacy": true,
+    "note": "DC inlet current. AC current is Phase1, Phase2, and Phase3.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargeCurrent.DC",
+    "unit": "A"
+  },
+  "CHARGER_POWER": {
+    "legacy": true,
+    "note": "Average power of the current or last charging event.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.AveragePower",
+    "unit": "kW"
+  },
+  "CHARGER_TYPE": {
+    "reason": "Active connected charger type (none, ac, dc) has no single VSS signal; SupportedInletTypes is an attribute array."
+  },
+  "CHARGER_VOLTAGE": {
+    "legacy": true,
+    "note": "DC inlet voltage. AC voltage is Phase1, Phase2, and Phase3.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargeVoltage.DC",
+    "unit": "V"
+  },
+  "CHARGE_ENERGY_ADDED": {
+    "legacy": true,
+    "reason": "Session energy added has no VSS signal. Vehicle.Powertrain.TractionBattery.AccumulatedChargedEnergy is lifetime charged energy."
+  },
+  "CHARGE_LIMIT": {
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargeLimit",
+    "unit": "percent"
+  },
+  "CHARGE_LIMIT_SOC": {
+    "legacy": true,
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargeLimit",
+    "unit": "percent"
+  },
+  "CHARGE_PORT": {
+    "note": "Single charging port. Use a position instance instead of AnyPosition when the port location is known.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition.IsFlapOpen",
+    "target": true
+  },
+  "CHARGE_PORT_CLOSE": {
+    "legacy": true,
+    "note": "Single charging port. Use a position instance instead of AnyPosition when the port location is known.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition.IsFlapOpen",
+    "target": false
+  },
+  "CHARGE_PORT_OPEN": {
+    "legacy": true,
+    "note": "Single charging port. Use a position instance instead of AnyPosition when the port location is known.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition.IsFlapOpen",
+    "target": true
+  },
+  "CHARGE_POWER": {
+    "note": "Average power of the current or last charging event.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.AveragePower",
+    "unit": "kW"
+  },
+  "CHARGE_RATE": {
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargeRate",
+    "unit": "km/h"
+  },
+  "CHARGE_START": {
+    "legacy": true,
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.StartStopCharging",
+    "target": "START"
+  },
+  "CHARGE_STOP": {
+    "legacy": true,
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.StartStopCharging",
+    "target": "STOP"
+  },
+  "CHARGE_TIME_REMAINING": {
+    "note": "Includes a scheduled delay before charging starts.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.TimeToComplete",
+    "unit": "s"
+  },
+  "CHARGING": {
+    "note": "Active charging status. Start/stop commands map to Vehicle.Powertrain.TractionBattery.Charging.StartStopCharging.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.IsCharging"
+  },
+  "CHARGING_STATE": {
+    "legacy": true,
+    "reason": "disconnected, stopped, charging, and complete do not match Vehicle.Powertrain.TractionBattery.ChargingState."
+  },
+  "CLEAR_DTC": {
+    "action": "CLEAR_DTC"
+  },
+  "CLIMATE": {
+    "reason": "No single climate power actuator. Air conditioning is Vehicle.Cabin.HVAC.IsAirConditioningActive."
+  },
+  "CLIMATE_OFF": {
+    "legacy": true,
+    "reason": "No single climate power actuator. Air conditioning is Vehicle.Cabin.HVAC.IsAirConditioningActive."
+  },
+  "CLIMATE_ON": {
+    "legacy": true,
+    "reason": "No single climate power actuator. Air conditioning is Vehicle.Cabin.HVAC.IsAirConditioningActive."
+  },
+  "CLOSE_FRONT_LEFT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.Window.Position",
+    "target": 0,
+    "unit": "percent"
+  },
+  "CLOSE_FRONT_RIGHT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.Window.Position",
+    "target": 0,
+    "unit": "percent"
+  },
+  "CLOSE_FRUNK": {
+    "legacy": true,
+    "note": "Front luggage compartment. Vehicle.Body.Hood is the engine cover.",
+    "path": "Vehicle.Body.Trunk.Front.IsOpen",
+    "target": false
+  },
+  "CLOSE_REAR_LEFT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.Window.Position",
+    "target": 0,
+    "unit": "percent"
+  },
+  "CLOSE_REAR_RIGHT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.Window.Position",
+    "target": 0,
+    "unit": "percent"
+  },
+  "CLOSE_TRUNK": {
+    "legacy": true,
+    "path": "Vehicle.Body.Trunk.Rear.IsOpen",
+    "target": false
+  },
+  "CLUTCH_PEDAL": {
+    "note": "Clutch pedal travel. 0 is not depressed and 100 is fully depressed. Clutch engagement is Vehicle.Powertrain.Transmission.ClutchEngagement.",
+    "path": "Vehicle.Chassis.Clutch.PedalPosition",
+    "unit": "percent"
+  },
+  "CRUISE_CONTROL": {
+    "note": "Cruise control engaged. Master switch is Vehicle.ADAS.CruiseControl.IsEnabled.",
+    "path": "Vehicle.ADAS.CruiseControl.IsActive"
+  },
+  "DEFROST_OFF": {
+    "legacy": true,
+    "note": "Front defroster. Rear defroster is Vehicle.Cabin.HVAC.IsRearDefrosterActive.",
+    "path": "Vehicle.Cabin.HVAC.IsFrontDefrosterActive",
+    "target": false
+  },
+  "DEFROST_ON": {
+    "legacy": true,
+    "note": "Front defroster. Rear defroster is Vehicle.Cabin.HVAC.IsRearDefrosterActive.",
+    "path": "Vehicle.Cabin.HVAC.IsFrontDefrosterActive",
+    "target": true
+  },
+  "DIST_SINCE_CLEAR": {
+    "note": "COVESA OBD overlay, PID 31.",
+    "path": "Vehicle.OBD.DistanceSinceDTCClear",
+    "unit": "km"
+  },
+  "DOORS": {
+    "enum": {
+      "locked": true,
+      "unlocked": false
+    },
+    "note": "Central locking for all doors.",
+    "path": "Vehicle.Cabin.IsCentralLockEngaged"
+  },
+  "DRIVER_TEMP_SETTING": {
+    "path": "Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature",
+    "unit": "Celsius"
+  },
+  "DRIVER_TORQUE_DEMAND": {
+    "reason": "OBD driver-demand engine torque (PID 61) is not in the VSS 6.1 catalog or the OBD overlay."
+  },
+  "ECT": {
+    "path": "Vehicle.Powertrain.CombustionEngine.EngineCoolant.Temperature",
+    "unit": "Celsius"
+  },
+  "ECU_WAKE": {
+    "action": "ECU_WAKE"
+  },
+  "ENGINE": {
+    "note": "Engine rotating. Remote start is action REMOTE_START.",
+    "path": "Vehicle.Powertrain.CombustionEngine.IsRunning"
+  },
+  "ENGINE_LOAD": {
+    "note": "COVESA OBD overlay, PID 04.",
+    "path": "Vehicle.OBD.EngineLoad",
+    "unit": "percent"
+  },
+  "ESTIMATED_RANGE": {
+    "legacy": true,
+    "note": "Remaining range from all energy sources.",
+    "path": "Vehicle.Powertrain.Range",
+    "unit": "m"
+  },
+  "FLASH_LIGHTS": {
+    "action": "FLASH_LIGHTS"
+  },
+  "FOG_LIGHTS": {
+    "note": "Front fog lights. Rear fog lights are Vehicle.Body.Lights.Fog.Rear.IsOn.",
+    "path": "Vehicle.Body.Lights.Fog.Front.IsOn",
+    "target": true
+  },
+  "FRONT_DEFROST": {
+    "note": "Front defroster. Rear defroster is REAR_DEFROST.",
+    "path": "Vehicle.Cabin.HVAC.IsFrontDefrosterActive",
+    "target": true
+  },
+  "FRONT_LEFT_DOOR": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.IsOpen"
+  },
+  "FRONT_LEFT_DOOR_OPEN": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.IsOpen",
+    "target": true
+  },
+  "FRONT_LEFT_SEATBELT": {
+    "enum": {
+      "fastened": true,
+      "unfastened": false
+    },
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Seat.Row1.DriverSide.IsBelted"
+  },
+  "FRONT_LEFT_SEAT_HEATER": {
+    "reason": "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling is a signed percent (-100 to 100), not discrete off/low/medium/high levels."
+  },
+  "FRONT_LEFT_TIRE_PRESSURE": {
+    "note": "Front-axle left tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "FRONT_LEFT_WINDOW": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability. Travel in percent is FRONT_LEFT_WINDOW_POSITION.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.Window.IsOpen"
+  },
+  "FRONT_LEFT_WINDOW_POSITION": {
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed and 100 is fully open.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.Window.Position",
+    "unit": "percent"
+  },
+  "FRONT_RIGHT_DOOR": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.IsOpen"
+  },
+  "FRONT_RIGHT_DOOR_OPEN": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.IsOpen",
+    "target": true
+  },
+  "FRONT_RIGHT_SEATBELT": {
+    "enum": {
+      "fastened": true,
+      "unfastened": false
+    },
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Seat.Row1.PassengerSide.IsBelted"
+  },
+  "FRONT_RIGHT_SEAT_HEATER": {
+    "reason": "Vehicle.Cabin.Seat.Row1.PassengerSide.HeatingCooling is a signed percent (-100 to 100), not discrete off/low/medium/high levels."
+  },
+  "FRONT_RIGHT_TIRE_PRESSURE": {
+    "note": "Front-axle right tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "FRONT_RIGHT_WINDOW": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability. Travel in percent is FRONT_RIGHT_WINDOW_POSITION.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.Window.IsOpen"
+  },
+  "FRONT_RIGHT_WINDOW_POSITION": {
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed and 100 is fully open.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.Window.Position",
+    "unit": "percent"
+  },
+  "FUEL_DOOR": {
+    "path": "Vehicle.Powertrain.FuelSystem.IsFuelPortFlapOpen",
+    "target": true
+  },
+  "FUEL_LEVEL": {
+    "path": "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+    "unit": "percent"
+  },
+  "FUEL_PRESSURE": {
+    "note": "COVESA OBD overlay, PID 0A.",
+    "path": "Vehicle.OBD.FuelPressure",
+    "unit": "kPa"
+  },
+  "FUEL_RATE": {
+    "note": "Engine fuel rate. COVESA OBD overlay, PID 5E. FuelSystem.InstantConsumption is l/100km.",
+    "path": "Vehicle.OBD.FuelRate",
+    "unit": "l/h"
+  },
+  "GEAR": {
+    "enum": {
+      "drive": 127,
+      "neutral": 0,
+      "park": 126,
+      "reverse": -1
+    },
+    "note": "Selected gear. 126 = park, -1 = reverse, 0 = neutral, 127 = drive.",
+    "path": "Vehicle.Powertrain.Transmission.SelectedGear"
+  },
+  "HAZARDS": {
+    "path": "Vehicle.Body.Lights.Hazard.IsSignaling",
+    "target": true
+  },
+  "HAZARD_LIGHTS": {
+    "legacy": true,
+    "path": "Vehicle.Body.Lights.Hazard.IsSignaling",
+    "target": true
+  },
+  "HIGH_BEAM": {
+    "legacy": true,
+    "path": "Vehicle.Body.Lights.Beam.High.IsOn",
+    "target": true
+  },
+  "HIGH_BEAMS": {
+    "path": "Vehicle.Body.Lights.Beam.High.IsOn",
+    "target": true
+  },
+  "HOOD": {
+    "note": "Engine cover. Front luggage compartment is Vehicle.Body.Trunk.Front.IsOpen.",
+    "path": "Vehicle.Body.Hood.IsOpen"
+  },
+  "HORN": {
+    "path": "Vehicle.Body.Horn.IsActive",
+    "target": true
+  },
+  "HV_BATTERY_CAPACITY": {
+    "note": "Net usable capacity. Gross capacity is Vehicle.Powertrain.TractionBattery.GrossCapacity.",
+    "path": "Vehicle.Powertrain.TractionBattery.NetCapacity",
+    "unit": "kWh"
+  },
+  "HV_BATTERY_CURRENT": {
+    "path": "Vehicle.Powertrain.TractionBattery.CurrentCurrent",
+    "unit": "A"
+  },
+  "HV_BATTERY_POWER": {
+    "reason": "Vehicle.Powertrain.TractionBattery.CurrentPower is in W, while HV_BATTERY_POWER is in kW."
+  },
+  "HV_BATTERY_SOC": {
+    "note": "Customer-displayed state of charge. Physical state of charge is StateOfCharge.Current.",
+    "path": "Vehicle.Powertrain.TractionBattery.StateOfCharge.Displayed",
+    "unit": "percent"
+  },
+  "HV_BATTERY_SOH": {
+    "path": "Vehicle.Powertrain.TractionBattery.StateOfHealth",
+    "unit": "percent"
+  },
+  "HV_BATTERY_TEMP": {
+    "path": "Vehicle.Powertrain.TractionBattery.Temperature.Average",
+    "unit": "Celsius"
+  },
+  "HV_BATTERY_VOLTAGE": {
+    "path": "Vehicle.Powertrain.TractionBattery.CurrentVoltage",
+    "unit": "V"
+  },
+  "IAT": {
+    "note": "COVESA OBD overlay, PID 0F.",
+    "path": "Vehicle.OBD.IntakeTemp",
+    "unit": "Celsius"
+  },
+  "IDEAL_RANGE": {
+    "legacy": true,
+    "reason": "VSS has no ideal or rated range separate from remaining range."
+  },
+  "IGNITION": {
+    "enum": {
+      "accessory": "ACC",
+      "lock": "LOCK",
+      "off": "OFF",
+      "on": "ON",
+      "start": "START"
+    },
+    "note": "Power mode. Allowed values are UNDEFINED, LOCK, OFF, ACC, ON, and START.",
+    "path": "Vehicle.LowVoltageSystemState"
+  },
+  "INTERIOR_LIGHTS": {
+    "path": "Vehicle.Cabin.Light.IsDomeOn",
+    "target": true
+  },
+  "LAMBDA": {
+    "note": "First wideband oxygen sensor, PID 24. Sensors 2 through 8 are Vehicle.OBD.O2WR.Sensor2.Lambda through Sensor8.Lambda.",
+    "path": "Vehicle.OBD.O2WR.Sensor1.Lambda"
+  },
+  "LEFT_SIGNAL": {
+    "path": "Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling",
+    "target": true
+  },
+  "LOCK": {
+    "legacy": true,
+    "path": "Vehicle.Cabin.IsCentralLockEngaged",
+    "target": true
+  },
+  "LOCKED": {
+    "legacy": true,
+    "path": "Vehicle.Cabin.IsCentralLockEngaged"
+  },
+  "LOW_BEAM": {
+    "legacy": true,
+    "path": "Vehicle.Body.Lights.Beam.Low.IsOn",
+    "target": true
+  },
+  "LOW_BEAMS": {
+    "path": "Vehicle.Body.Lights.Beam.Low.IsOn",
+    "target": true
+  },
+  "LTFT_B1": {
+    "note": "COVESA OBD overlay, PID 07.",
+    "path": "Vehicle.OBD.LongTermFuelTrim1",
+    "unit": "percent"
+  },
+  "LTFT_B2": {
+    "note": "COVESA OBD overlay, PID 09.",
+    "path": "Vehicle.OBD.LongTermFuelTrim2",
+    "unit": "percent"
+  },
+  "MAF": {
+    "path": "Vehicle.Powertrain.CombustionEngine.MAF",
+    "unit": "g/s"
+  },
+  "MAP": {
+    "path": "Vehicle.Powertrain.CombustionEngine.MAP",
+    "unit": "kPa"
+  },
+  "MIL_STATUS": {
+    "note": "Malfunction indicator lamp. COVESA OBD overlay, PID 01.",
+    "path": "Vehicle.OBD.Status.IsMILOn"
+  },
+  "MIRRORS": {
+    "reason": "VSS separates side mirrors into Vehicle.Body.Mirrors.DriverSide.IsFolded and PassengerSide.IsFolded."
+  },
+  "MODULE_VOLTAGE": {
+    "note": "COVESA OBD overlay, PID 42.",
+    "path": "Vehicle.OBD.ControlModuleVoltage",
+    "unit": "V"
+  },
+  "O2_DATA": {
+    "note": "First narrowband sensor voltage, PID 14 byte A. Short-term trim is Vehicle.OBD.O2.Sensor1.ShortTermFuelTrim. Sensors 2 through 8 follow the same shape.",
+    "path": "Vehicle.OBD.O2.Sensor1.Voltage",
+    "unit": "V"
+  },
+  "ODOMETER": {
+    "note": "Lifetime distance.",
+    "path": "Vehicle.TraveledDistance",
+    "unit": "m"
+  },
+  "OIL_LIFE": {
+    "reason": "Vehicle.Powertrain.CombustionEngine.EngineOil.LifeRemaining is in seconds, not percent."
+  },
+  "OIL_PRESSURE": {
+    "reason": "VSS has EngineOil.PressureStatus (string), not a numeric kPa oil-pressure signal."
+  },
+  "OIL_TEMP": {
+    "path": "Vehicle.Powertrain.CombustionEngine.EngineOil.Temperature",
+    "unit": "Celsius"
+  },
+  "OPEN_FRONT_LEFT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 100 is fully open when the command does not select a percent.",
+    "path": "Vehicle.Cabin.Door.Row1.DriverSide.Window.Position",
+    "target": 100,
+    "unit": "percent"
+  },
+  "OPEN_FRONT_RIGHT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 100 is fully open when the command does not select a percent.",
+    "path": "Vehicle.Cabin.Door.Row1.PassengerSide.Window.Position",
+    "target": 100,
+    "unit": "percent"
+  },
+  "OPEN_FRUNK": {
+    "legacy": true,
+    "note": "Front luggage compartment. Vehicle.Body.Hood is the engine cover.",
+    "path": "Vehicle.Body.Trunk.Front.IsOpen",
+    "target": true
+  },
+  "OPEN_REAR_LEFT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 100 is fully open when the command does not select a percent.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.Window.Position",
+    "target": 100,
+    "unit": "percent"
+  },
+  "OPEN_REAR_RIGHT_WINDOW": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 100 is fully open when the command does not select a percent.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.Window.Position",
+    "target": 100,
+    "unit": "percent"
+  },
+  "OPEN_TRUNK": {
+    "legacy": true,
+    "path": "Vehicle.Body.Trunk.Rear.IsOpen",
+    "target": true
+  },
+  "OUTSIDE_TEMP": {
+    "legacy": true,
+    "path": "Vehicle.Exterior.AirTemperature",
+    "unit": "Celsius"
+  },
+  "PANIC": {
+    "action": "PANIC"
+  },
+  "PARKING_BRAKE": {
+    "path": "Vehicle.Chassis.ParkingBrake.IsEngaged",
+    "target": true
+  },
+  "PASSENGER_TEMP_SETTING": {
+    "path": "Vehicle.Cabin.HVAC.Station.Row1.Passenger.Temperature",
+    "unit": "Celsius"
+  },
+  "PLUGGED_IN": {
+    "legacy": true,
+    "note": "Single charging port. Use a position instance instead of AnyPosition when the port location is known.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition.IsChargingCableConnected"
+  },
+  "RANGE": {
+    "note": "Remaining range from all energy sources.",
+    "path": "Vehicle.Powertrain.Range",
+    "unit": "m"
+  },
+  "READINESS_STATUS": {
+    "reason": "OBD readiness monitors are a bitmap in PID 01 and are not a single signal. MIL state is Vehicle.OBD.Status.IsMILOn."
+  },
+  "READY": {
+    "reason": "VSS has no propulsion-ready state signal; Vehicle.IsMoving only indicates motion."
+  },
+  "REAR_DEFROST": {
+    "note": "Rear defroster. Front defroster is FRONT_DEFROST.",
+    "path": "Vehicle.Cabin.HVAC.IsRearDefrosterActive",
+    "target": true
+  },
+  "REAR_LEFT_DOOR": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.IsOpen"
+  },
+  "REAR_LEFT_DOOR_OPEN": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.IsOpen",
+    "target": true
+  },
+  "REAR_LEFT_TIRE_PRESSURE": {
+    "note": "Rear-axle left tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "REAR_LEFT_WINDOW": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability. Travel in percent is REAR_LEFT_WINDOW_POSITION.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.Window.IsOpen"
+  },
+  "REAR_LEFT_WINDOW_POSITION": {
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed and 100 is fully open.",
+    "path": "Vehicle.Cabin.Door.Row2.DriverSide.Window.Position",
+    "unit": "percent"
+  },
+  "REAR_RIGHT_DOOR": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.IsOpen"
+  },
+  "REAR_RIGHT_DOOR_OPEN": {
+    "legacy": true,
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.IsOpen",
+    "target": true
+  },
+  "REAR_RIGHT_TIRE_PRESSURE": {
+    "note": "Rear-axle right tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "REAR_RIGHT_WINDOW": {
+    "note": "Closed and open. Left/right mapping assumes left-hand-drive; review vehicle applicability. Travel in percent is REAR_RIGHT_WINDOW_POSITION.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.Window.IsOpen"
+  },
+  "REAR_RIGHT_WINDOW_POSITION": {
+    "note": "Left/right mapping assumes left-hand-drive; review vehicle applicability. 0 is fully closed and 100 is fully open.",
+    "path": "Vehicle.Cabin.Door.Row2.PassengerSide.Window.Position",
+    "unit": "percent"
+  },
+  "REAR_WIPER": {
+    "note": "Rear windshield. Use MEDIUM when the command does not select a speed.",
+    "path": "Vehicle.Body.Windshield.Rear.Wiping.Mode",
+    "target": "MEDIUM"
+  },
+  "REAR_WIPER_OFF": {
+    "legacy": true,
+    "note": "Rear windshield.",
+    "path": "Vehicle.Body.Windshield.Rear.Wiping.Mode",
+    "target": "OFF"
+  },
+  "REMOTE_START": {
+    "action": "REMOTE_START",
+    "legacy": true
+  },
+  "REMOVE_CHARGE_SCHEDULE": {
+    "action": "REMOVE_CHARGE_SCHEDULE",
+    "legacy": true
+  },
+  "REMOVE_PRECONDITION_SCHEDULE": {
+    "action": "REMOVE_PRECONDITION_SCHEDULE",
+    "legacy": true
+  },
+  "REVERSE_LIGHTS": {
+    "path": "Vehicle.Body.Lights.Backup.IsOn"
+  },
+  "RIGHT_SIGNAL": {
+    "path": "Vehicle.Body.Lights.DirectionIndicator.Right.IsSignaling",
+    "target": true
+  },
+  "RPM": {
+    "path": "Vehicle.Powertrain.CombustionEngine.Speed",
+    "unit": "rpm"
+  },
+  "RUNNING_LIGHTS": {
+    "path": "Vehicle.Body.Lights.Running.IsOn",
+    "target": true
+  },
+  "RUNTIME": {
+    "note": "Engine run time. COVESA OBD overlay, PID 1F.",
+    "path": "Vehicle.OBD.RunTime",
+    "unit": "s"
+  },
+  "SCHEDULE_SOFTWARE_UPDATE": {
+    "action": "SCHEDULE_SOFTWARE_UPDATE",
+    "legacy": true
+  },
+  "SEATBELT_WARNING": {
+    "note": "Vehicle seatbelt warning indicator. True means the indicator is active. Per-seat buckle state remains IsBelted.",
+    "path": "Vehicle.Cabin.IsSeatBeltWarningActive"
+  },
+  "SET_CHARGE_LIMIT": {
+    "legacy": true,
+    "reason": "The limit is a caller-supplied value, not a fixed write target. The signal is Vehicle.Powertrain.TractionBattery.Charging.ChargeLimit."
+  },
+  "SET_CHARGING_AMPS": {
+    "legacy": true,
+    "reason": "No commanded charging-current actuator. MaximumChargingCurrent is inlet capability, not a setpoint."
+  },
+  "SET_TEMPERATURE": {
+    "legacy": true,
+    "reason": "The station is not fixed. Use DRIVER_TEMP_SETTING or PASSENGER_TEMP_SETTING."
+  },
+  "SIGNAL_OFF": {
+    "action": "SIGNAL_OFF",
+    "legacy": true
+  },
+  "SPEED": {
+    "path": "Vehicle.Speed",
+    "unit": "km/h"
+  },
+  "STEERING_ANGLE": {
+    "path": "Vehicle.Chassis.SteeringWheel.Angle",
+    "unit": "degrees"
+  },
+  "STFT_B1": {
+    "note": "COVESA OBD overlay, PID 06.",
+    "path": "Vehicle.OBD.ShortTermFuelTrim1",
+    "unit": "percent"
+  },
+  "STFT_B2": {
+    "note": "COVESA OBD overlay, PID 08.",
+    "path": "Vehicle.OBD.ShortTermFuelTrim2",
+    "unit": "percent"
+  },
+  "SUNROOF": {
+    "enum": {
+      "closed": "CLOSE",
+      "open": "OPEN"
+    },
+    "note": "Switch command/state. Travel in percent is SUNROOF_POSITION.",
+    "path": "Vehicle.Cabin.Sunroof.Switch",
+    "target": "OPEN"
+  },
+  "SUNROOF_POSITION": {
+    "note": "0 is fully closed, 100 is fully opened, and -100 is fully tilted.",
+    "path": "Vehicle.Cabin.Sunroof.Position",
+    "unit": "percent"
+  },
+  "SUPPORTED_PIDS_01_20": {
+    "query": "SUPPORTED_PIDS_01_20"
+  },
+  "TIME_TO_FULL_CHARGE": {
+    "legacy": true,
+    "note": "Includes a scheduled delay before charging starts.",
+    "path": "Vehicle.Powertrain.TractionBattery.Charging.TimeToComplete",
+    "unit": "s"
+  },
+  "TIMING_ADVANCE": {
+    "note": "COVESA OBD overlay, PID 0E. The value is the angle, not the raw OBD byte.",
+    "path": "Vehicle.OBD.TimingAdvance",
+    "unit": "degrees"
+  },
+  "TPMS_FRONT_LEFT": {
+    "legacy": true,
+    "note": "Front-axle left tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "TPMS_FRONT_RIGHT": {
+    "legacy": true,
+    "note": "Front-axle right tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "TPMS_REAR_LEFT": {
+    "legacy": true,
+    "note": "Rear-axle left tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "TPMS_REAR_RIGHT": {
+    "legacy": true,
+    "note": "Rear-axle right tire pressure.",
+    "path": "Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure",
+    "unit": "kPa"
+  },
+  "TPS": {
+    "path": "Vehicle.Powertrain.CombustionEngine.TPS",
+    "unit": "percent"
+  },
+  "TRANSMISSION_TEMP": {
+    "path": "Vehicle.Powertrain.Transmission.Temperature",
+    "unit": "Celsius"
+  },
+  "TRUNK": {
+    "note": "Rear luggage compartment. False is closed and true is open. The action opens the trunk.",
+    "path": "Vehicle.Body.Trunk.Rear.IsOpen",
+    "target": true
+  },
+  "UNLOCK": {
+    "legacy": true,
+    "path": "Vehicle.Cabin.IsCentralLockEngaged",
+    "target": false
+  },
+  "VIN": {
+    "path": "Vehicle.VehicleIdentification.VIN"
+  },
+  "WAKE_UP": {
+    "action": "WAKE_UP",
+    "legacy": true
+  },
+  "WASHER": {
+    "action": "WASHER"
+  },
+  "WINDOW_CHILD_LOCK": {
+    "note": "Disables the rear window switches so only the driver can operate them.",
+    "path": "Vehicle.Cabin.IsWindowChildLockEngaged",
+    "target": true
+  },
+  "WINDOW_CHILD_UNLOCK": {
+    "legacy": true,
+    "path": "Vehicle.Cabin.IsWindowChildLockEngaged",
+    "target": false
+  },
+  "WIPERS": {
+    "note": "Front windshield. Use MEDIUM when the command does not select a speed.",
+    "path": "Vehicle.Body.Windshield.Front.Wiping.Mode",
+    "target": "MEDIUM"
+  }
+}

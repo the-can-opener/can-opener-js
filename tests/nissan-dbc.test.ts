@@ -94,15 +94,15 @@ describe("Nissan Sentra DBC", () => {
     });
 
     await expect(car.subscribe([
-      "SPEED",
-      "RPM",
-      "TPS",
-      "STEERING_ANGLE",
-      "BRAKE_LIGHTS",
-      "LOW_BEAMS",
-      "HIGH_BEAMS",
-      "LEFT_SIGNAL",
-      "RIGHT_SIGNAL",
+      "Vehicle.Speed",
+      "Vehicle.Powertrain.CombustionEngine.Speed",
+      "Vehicle.Powertrain.CombustionEngine.TPS",
+      "Vehicle.Chassis.SteeringWheel.Angle",
+      "Vehicle.Body.Lights.Brake.IsActive",
+      "Vehicle.Body.Lights.Beam.Low.IsOn",
+      "Vehicle.Body.Lights.Beam.High.IsOn",
+      "Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling",
+      "Vehicle.Body.Lights.DirectionIndicator.Right.IsSignaling",
     ])).resolves.toBe(true);
     expect(Array.from(transport.monitorCanIds)).toEqual([640, 505, 574, 2, 852, 1549]);
 
@@ -115,11 +115,11 @@ describe("Nissan Sentra DBC", () => {
       data: Uint8Array.of(0, 0, 0, 0, 0xD0, 0x07, 0, 0),
     });
 
-    expect(car.state.get<number>("SPEED")).toBe(20);
-    expect(car.state.get<string>("LEFT_SIGNAL")).toBe("on");
-    expect(car.state.get<string>("RIGHT_SIGNAL")).toBe("off");
-    expect(car.state.get<string>("LOW_BEAMS")).toBe("on");
-    expect(car.state.get<string>("HIGH_BEAMS")).toBe("on");
+    expect(car.state.get<number>("Vehicle.Speed")).toBe(20);
+    expect(car.state.get<boolean>("Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling")).toBe(true);
+    expect(car.state.get<boolean>("Vehicle.Body.Lights.DirectionIndicator.Right.IsSignaling")).toBe(false);
+    expect(car.state.get<boolean>("Vehicle.Body.Lights.Beam.Low.IsOn")).toBe(true);
+    expect(car.state.get<boolean>("Vehicle.Body.Lights.Beam.High.IsOn")).toBe(true);
   });
 
   it("runs the traced standardized body-control actions from the Nissan profile", async () => {
@@ -133,11 +133,12 @@ describe("Nissan Sentra DBC", () => {
 
     scriptBodyActionResponses(transport);
 
-    await expect(car.action("HORN")).resolves.toBe(true);
-    await expect(car.action("DOORS", { value: "lock" })).resolves.toBe(true);
-    expect(car.state.get<string>("DOORS")).toBe("lock");
-    await expect(car.action("DOORS", { value: "unlock" })).resolves.toBe(true);
-    expect(car.state.get<string>("DOORS")).toBe("unlock");
+    await expect(car.set("Vehicle.Body.Horn.IsActive", true)).resolves.toBe("acknowledged");
+    // DOORS.lock and DOORS.unlock are the true and false targets of the central lock.
+    await expect(car.set("Vehicle.Cabin.IsCentralLockEngaged", true)).resolves.toBe("acknowledged");
+    await expect(car.set("Vehicle.Cabin.IsCentralLockEngaged", false)).resolves.toBe("acknowledged");
+    // A write is not an observation, so it leaves state alone.
+    expect(car.state.get("Vehicle.Cabin.IsCentralLockEngaged")).toBeUndefined();
 
     expect(transport.requests.map((request) => ({
       canId: request.txFrame.canId,

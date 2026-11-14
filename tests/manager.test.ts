@@ -70,9 +70,9 @@ describe("VirtualVehicleManager", () => {
     transport.emitFrame(vehicle.dbc.encodeSignal("ENGINE_RPM", 1000));
     expect(vehicle.state.get<number>("ENGINE_RPM")).toBe(1000);
 
-    await vehicle.action("HORN");
+    await expect(vehicle.alias.command("HORN")).resolves.toBe("sent");
     expect(transport.requests.at(-1)).toMatchObject({
-      signalName: "HORN",
+      signalName: "Vehicle.Body.Horn.IsActive=true",
       expectCanResponse: false,
     });
   });

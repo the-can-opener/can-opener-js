@@ -1,0 +1,86 @@
+manifest: 1
+format: 2
+id: org.example.hvac.synthetic
+version: 2.0.0
+name: "SYNTHETIC HVAC \u2014 not a vehicle command mapping"
+vss: '6.1'
+channels:
+  vehicle:
+    protocol: can
+    configuration: runtime
+endpoints:
+  climate:
+    channel: vehicle
+    protocol: isotp
+    tx: '700'
+    rx:
+    - '708'
+    id_format: standard
+    timeout_ms: 500
+sources:
+  climate-status:
+    kind: query
+    endpoint: climate
+    request: AA 01
+    response:
+      prefix: BB 01
+      min_data_bytes: 2
+    outputs:
+      ambient:
+        byte: 0
+        bytes: 1
+        type: uint
+        offset: -40
+        unit: Celsius
+      selected:
+        byte: 1
+        bytes: 1
+        type: uint
+        scale: 0.5
+        offset: 16
+        unit: Celsius
+properties:
+  Vehicle.Cabin.HVAC.AmbientAirTemperature:
+    read:
+      query:
+        source: climate-status
+        output: ambient
+      signal:
+        channel: vehicle
+        id: '100'
+        id_format: standard
+        length: 1
+        decode:
+          byte: 0
+          bytes: 1
+          type: uint
+          offset: -40
+          unit: Celsius
+      policy:
+        preferred: signal
+        max_age_ms: 500
+        active_fallback: false
+  Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature:
+    read:
+      query:
+        source: climate-status
+        output: selected
+    write:
+      endpoint: climate
+      request:
+        parts:
+        - AA BB
+        - input: value
+          type: uint
+          bytes: 1
+          endian: big
+          scale: 0.5
+          offset: 16
+      expect:
+        prefix: CC DD
+      constraints:
+        min: 16
+        max: 30
+        step: 0.5
+fixtures:
+- fixtures.yaml

@@ -1,20 +1,21 @@
-import type { DbcController } from "../dbc/DbcController.js";
-import type { CanFrame, VehicleSignal, VehicleSignalState } from "../dbc/types.js";
-import { applyValueNormalization } from "../profile/normalize.js";
-import type { ProfileValueNormalization } from "../profile/types.js";
+import type { CanFrame } from "../dbc/types.js";
 import type { VehicleTransport } from "../transport/types.js";
 import type { VehicleState } from "../vehicle/VehicleState.js";
 
-interface ActiveSubscription {
-  state: VehicleSignalState;
-  bus: number;
-  normalize?: ProfileValueNormalization;
+export interface SubscriptionRequest {
+  /** State key the decoded value is published under. */
+  name: string;
+  canId: number;
+  bus?: number;
+  /**
+   * The value a frame carries. Returning `undefined` or throwing marks an
+   * invalid observation, which is not published.
+   */
+  decode(frame: CanFrame): unknown;
 }
 
-interface SubscriptionRequest {
-  state: VehicleSignalState;
-  bus?: number;
-  normalize?: ProfileValueNormalization;
+interface ActiveSubscription extends SubscriptionRequest {
+  bus: number;
 }
 
 interface FrameRef {
@@ -36,33 +37,24 @@ export class SubscriptionController {
 
   constructor(
     private readonly state: VehicleState,
-    private readonly dbc: DbcController,
     private readonly transport: VehicleTransport,
   ) {}
-
-  async add(signal: VehicleSignal): Promise<boolean> {
-    return await this.addMany([{ state: { name: signal.name, signal } }]);
-  }
 
   async addMany(requests: SubscriptionRequest[]): Promise<boolean> {
     const affectedFrames = new Map<string, FrameRef>();
 
-    for (const { state } of requests) {
-      this.removeActive(state.name, affectedFrames);
+    for (const { name } of requests) {
+      this.removeActive(name, affectedFrames);
     }
 
     for (const request of requests) {
       const bus = normalizeBus(request.bus);
-      const active: ActiveSubscription = {
-        state: request.state,
-        bus,
-        ...(request.normalize !== undefined ? { normalize: request.normalize } : {}),
-      };
-      const ref = { bus, canId: request.state.signal.canId };
+      const active: ActiveSubscription = { ...request, bus };
+      const ref = { bus, canId: request.canId };
       const key = frameKey(ref.bus, ref.canId);
 
-      this.activeBySignal.set(request.state.name, active);
-      this.getOrCreateFrameSubscriptions(ref).set(request.state.name, active);
+      this.activeBySignal.set(request.name, active);
+      this.getOrCreateFrameSubscriptions(ref).set(request.name, active);
       affectedFrames.set(key, ref);
     }
 
@@ -77,17 +69,18 @@ export class SubscriptionController {
       return;
     }
 
-    const decoded = this.dbc.decodeFrame(frame);
-    for (const { signal, value } of decoded) {
-      for (const active of activeSignals.values()) {
-        if (active.state.signal.name !== signal.name) {
-          continue;
-        }
-
-        const stateValue = decodeSubscriptionStateValue(active.state, value);
-        this.state.update(active.state.name, applyValueNormalization(stateValue, active.normalize));
-        this.recordFrame(active.state.name);
+    for (const active of activeSignals.values()) {
+      let value: unknown;
+      try {
+        value = active.decode(frame);
+      } catch {
+        continue;
       }
+      if (value === undefined) {
+        continue;
+      }
+      this.state.update(active.name, value);
+      this.recordFrame(active.name);
     }
   }
 
@@ -164,7 +157,7 @@ export class SubscriptionController {
 
     this.activeBySignal.delete(signalName);
     this.frameHistoryByName.delete(signalName);
-    const ref = { bus: active.bus, canId: active.state.signal.canId };
+    const ref = { bus: active.bus, canId: active.canId };
     const key = frameKey(ref.bus, ref.canId);
     const frameSubscriptions = this.activeByFrameKey.get(key);
     frameSubscriptions?.delete(signalName);
@@ -244,16 +237,4 @@ function parseFrameKey(key: string): FrameRef {
     bus: Number(key.slice(0, separator)),
     canId: Number(key.slice(separator + 1)),
   };
-}
-
-function decodeSubscriptionStateValue(state: VehicleSignalState, value: unknown): unknown {
-  if (state.enumValue === undefined) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    return value === state.name ? 1 : 0;
-  }
-
-  return value === state.enumValue ? 1 : 0;
 }

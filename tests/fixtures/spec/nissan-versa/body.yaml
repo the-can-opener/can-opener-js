@@ -1,0 +1,205 @@
+sequences:
+  body_session_prep:
+    steps:
+    - request: 10 81
+      expect:
+        prefix: 50 81
+    - request: 10 C0
+      expect:
+        prefix: 50 C0
+properties:
+  Vehicle.Body.Lights.Brake.IsActive:
+    aliases:
+    - BRAKE_LIGHTS
+    read:
+      signal:
+        dbc: main
+        message: SPEED_BRAKE
+        signal: BRAKE_LIGHTS
+        enum:
+          '0': INACTIVE
+          '1': ACTIVE
+  Vehicle.Body.Lights.Beam.Low.IsOn:
+    aliases:
+    - LOW_BEAMS
+    - LOW_BEAM
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: LOW_BEAMS
+        enum:
+          '0': false
+          '1': true
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 3B 00 01
+            expect:
+              prefix: 70 3B 01
+  Vehicle.Body.Lights.Beam.High.IsOn:
+    aliases:
+    - HIGH_BEAMS
+    - HIGH_BEAM
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: HIGH_BEAMS
+        enum:
+          '0': false
+          '1': true
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 3B 00 02
+            expect:
+              prefix: 70 3B *
+  Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling:
+    aliases:
+    - LEFT_SIGNAL
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: LEFT_SIGNAL
+        enum:
+          '0': false
+          '1': true
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 2F 00 02
+            expect:
+              prefix: 70 2F *
+          duration: 5000
+          release:
+            action: SIGNAL_OFF
+  Vehicle.Body.Lights.DirectionIndicator.Right.IsSignaling:
+    aliases:
+    - RIGHT_SIGNAL
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: RIGHT_SIGNAL
+        enum:
+          '0': false
+          '1': true
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 2F 00 01
+            expect:
+              prefix: 70 2F *
+          duration: 5000
+          release:
+            action: SIGNAL_OFF
+  Vehicle.Cabin.Door.Row1.DriverSide.IsOpen:
+    aliases:
+    - FRONT_LEFT_DOOR_OPEN
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: FRONT_LEFT_DOOR_OPEN
+        enum:
+          '0': false
+          '1': true
+  Vehicle.Cabin.Door.Row1.PassengerSide.IsOpen:
+    aliases:
+    - FRONT_RIGHT_DOOR_OPEN
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: FRONT_RIGHT_DOOR_OPEN
+        enum:
+          '0': false
+          '1': true
+  Vehicle.Cabin.Door.Row2.DriverSide.IsOpen:
+    aliases:
+    - REAR_LEFT_DOOR_OPEN
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: REAR_LEFT_DOOR_OPEN
+        enum:
+          '0': false
+          '1': true
+  Vehicle.Cabin.Door.Row2.PassengerSide.IsOpen:
+    aliases:
+    - REAR_RIGHT_DOOR_OPEN
+    read:
+      signal:
+        dbc: main
+        message: LIGHTS_STATUS_60D
+        signal: REAR_RIGHT_DOOR_OPEN
+        enum:
+          '0': false
+          '1': true
+  Vehicle.Body.Horn.IsActive:
+    aliases:
+    - HORN
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 30 00 01
+            expect:
+              prefix: 70 30 01
+  Vehicle.Body.Lights.Running.IsOn:
+    aliases:
+    - RUNNING_LIGHTS
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 3A 00 01
+            expect:
+              prefix: 70 3A 01
+  Vehicle.Cabin.IsCentralLockEngaged:
+    aliases:
+    - LOCK
+    - UNLOCK
+    write:
+      cases:
+        'true':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 38 00 01
+            expect:
+              prefix: 70 38 *
+        'false':
+          endpoint: body
+          steps:
+          - call: body_session_prep
+          - request: 30 38 00 02
+            expect:
+              prefix: 70 38 *
+  Vehicle.Body.Windshield.Front.Wiping.Mode:
+    aliases:
+    - WIPERS
+    write:
+      cases:
+        MEDIUM:
+          endpoint: generated-wipers
+          request: C1 03 40 00 00 00 00 00

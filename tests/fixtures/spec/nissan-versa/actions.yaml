@@ -1,0 +1,18 @@
+actions:
+  ECU_WAKE:
+    description: ECU_WAKE
+    endpoint: body_status
+    steps:
+    - request: 00 00 00 00 00 00 00 00
+    - request: 00 00 00 00 00 00 00 00
+    - request: 00 00 00 00 00 00 00 00
+    - request: 00 00 00 00 00 00 00 00
+    - request: 00 00 00 00 00 00 00 00
+  SIGNAL_OFF:
+    description: SIGNAL_OFF
+    endpoint: body
+    steps:
+    - call: body_session_prep
+    - request: 30 2F 00 00
+      expect:
+        prefix: 70 2F *

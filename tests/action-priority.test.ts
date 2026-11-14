@@ -11,6 +11,11 @@ import { universalPidProfile } from "./fixtures.js";
 
 const RPM_PID = 0x0c;
 const FUEL_LEVEL_PID = 0x2f;
+const RPM = "Vehicle.Powertrain.CombustionEngine.Speed";
+const FUEL_LEVEL = "Vehicle.Powertrain.FuelSystem.RelativeLevel";
+const HORN = "Vehicle.Body.Horn.IsActive";
+/** Transport name of the request that writes `true` to the horn. */
+const HORN_ON = `${HORN}=true`;
 
 const profileWithActions: VehicleProfileSource = {
   ...universalPidProfile,
@@ -31,7 +36,7 @@ class SleepyHornTransport extends MockTransport {
   private hornAttempts = 0;
 
   override async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
-    if (req.signalName === "HORN") {
+    if (req.signalName === HORN_ON) {
       this.hornAttempts += 1;
       if (this.hornAttempts === 1) {
         this.requests.push(req);
@@ -53,14 +58,14 @@ class KnownSleepingHornTransport extends MockTransport {
 
   override async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
     this.requests.push(req);
-    if (req.signalName === "RPM") {
+    if (req.signalName === RPM) {
       throw new NoEcuResponseError();
     }
     if (req.signalName === "ECU_WAKE") {
       this.awake = true;
       return undefined;
     }
-    if (req.signalName === "HORN") {
+    if (req.signalName === HORN_ON) {
       if (!this.awake) {
         throw new CanTransmitError();
       }
@@ -104,50 +109,50 @@ describe("actions take priority over background queries", () => {
   });
 
   it("keeps the round-robin quiet from the first action frame to the last", async () => {
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(transport.requests.filter((request) => request.signalName === "RPM").length).toBeGreaterThan(0);
+    expect(transport.requests.filter((request) => request.signalName === RPM).length).toBeGreaterThan(0);
 
     const before = transport.requests.length;
-    await expect(withSettleDelays(vehicle.action("HORN"))).resolves.toBe(true);
+    await expect(withSettleDelays(vehicle.set(HORN, true))).resolves.toBe("acknowledged");
 
     const duringAction = transport.requests.slice(before).map((request) => request.signalName);
-    expect(duringAction[0]).toBe("HORN");
-    expect(duringAction[duringAction.length - 1]).toBe("HORN");
-    expect(duringAction).not.toContain("RPM");
+    expect(duringAction[0]).toBe(HORN_ON);
+    expect(duringAction[duringAction.length - 1]).toBe(HORN_ON);
+    expect(duringAction).not.toContain(RPM);
 
     // The round-robin picks up again once the action is done.
     const after = transport.requests.length;
     await vi.advanceTimersByTimeAsync(1000);
-    expect(transport.requests.slice(after).some((request) => request.signalName === "RPM")).toBe(true);
+    expect(transport.requests.slice(after).some((request) => request.signalName === RPM)).toBe(true);
   });
 
   it("keeps polled subscriptions quiet while an action runs", async () => {
-    await vehicle.subscribeQuery("FUEL_LEVEL", { frequencyHz: 20 });
+    await vehicle.subscribeQuery(FUEL_LEVEL, { frequencyHz: 20 });
     await vi.advanceTimersByTimeAsync(500);
-    expect(transport.requests.filter((request) => request.signalName === "FUEL_LEVEL").length).toBeGreaterThan(0);
+    expect(transport.requests.filter((request) => request.signalName === FUEL_LEVEL).length).toBeGreaterThan(0);
 
     const before = transport.requests.length;
-    await expect(withSettleDelays(vehicle.action("HORN"))).resolves.toBe(true);
+    await expect(withSettleDelays(vehicle.set(HORN, true))).resolves.toBe("acknowledged");
 
     const duringAction = transport.requests.slice(before).map((request) => request.signalName);
-    expect(duringAction).not.toContain("FUEL_LEVEL");
+    expect(duringAction).not.toContain(FUEL_LEVEL);
 
     const after = transport.requests.length;
     await vi.advanceTimersByTimeAsync(500);
-    expect(transport.requests.slice(after).some((request) => request.signalName === "FUEL_LEVEL")).toBe(true);
+    expect(transport.requests.slice(after).some((request) => request.signalName === FUEL_LEVEL)).toBe(true);
   });
 
   it("does not disturb an explicit pause", async () => {
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     vehicle.pauseQueryRoundRobin();
     await vi.advanceTimersByTimeAsync(500);
     const before = transport.requests.length;
 
-    await expect(withSettleDelays(vehicle.action("HORN"))).resolves.toBe(true);
+    await expect(withSettleDelays(vehicle.set(HORN, true))).resolves.toBe("acknowledged");
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(transport.requests.slice(before).some((request) => request.signalName === "RPM")).toBe(false);
+    expect(transport.requests.slice(before).some((request) => request.signalName === RPM)).toBe(false);
   });
 
   it("starts with ECU wake instead of a failed action probe when the bus is asleep", async () => {
@@ -159,19 +164,19 @@ describe("actions take priority over background queries", () => {
       profiles: [profileWithActions],
     });
 
-    vehicle.updateQueryRoundRobin(["RPM"]);
+    vehicle.updateQueryRoundRobin([RPM]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vehicle.busActivity()).toBe("asleep");
     vehicle.updateQueryRoundRobin([]);
 
     const before = sleepingTransport.requests.length;
-    await expect(withSettleDelays(vehicle.action("HORN"))).resolves.toBe(true);
+    await expect(withSettleDelays(vehicle.set(HORN, true))).resolves.toBe("acknowledged");
 
     expect(
       sleepingTransport.requests
         .slice(before)
         .map((request) => request.signalName),
-    ).toEqual(["ECU_WAKE", "HORN"]);
+    ).toEqual(["ECU_WAKE", HORN_ON]);
   });
 });
 

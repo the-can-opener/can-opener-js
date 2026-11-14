@@ -1,5 +1,12 @@
 # can-opener-js Vehicle Profile and Library Specification
 
+> **Legacy.** This document describes profile format 1 (`version: 1` and
+> `version: 1.1`). Format 2 is the default, and its canonical specification is
+> [the-can-opener/vehicle-profile-spec](https://github.com/the-can-opener/vehicle-profile-spec). `can-opener-js` still loads
+> format 1 profiles and maps their keywords onto VSS paths with the
+> [spec vocabulary](https://github.com/the-can-opener/vehicle-profile-spec/blob/main/docs/vocabulary.yaml); see
+> [Profile formats](../README.md#profile-formats) for the API that results.
+
 Profile spec version 1.1. See the [changelog](#changelog) at the end.
 
 This document defines the concepts used by `can-opener-js`: vehicle
@@ -51,6 +58,23 @@ await vehicle.action("DOORS", { value: "lock" });    // present-tense command
 vehicle.state.get<string>("DOORS");                  // "lock" (the declared value)
 vehicle.state.get<string>("TRUNK");                  // "open" | "closed"
 ```
+
+The calls above are the format 1 API and no longer run as written. The
+library now keys every vocabulary keyword by its VSS path and types its value
+from the VSS catalog. The same profile is used like this:
+
+```ts
+await vehicle.alias.subscribe("SPEED");                        // state key "Vehicle.Speed"
+await vehicle.subscribe("Vehicle.Body.Trunk.Rear.IsOpen");
+const speed = vehicle.state.get<number>("Vehicle.Speed");
+const rpm = await vehicle.alias.read("RPM");
+await vehicle.alias.command("HORN");                           // writes true to Vehicle.Body.Horn.IsActive
+await vehicle.alias.command("LOCK");                           // DOORS.lock: true on Vehicle.Cabin.IsCentralLockEngaged
+vehicle.state.get<boolean>("Vehicle.Body.Trunk.Rear.IsOpen");  // true | false
+```
+
+A write no longer records its value in state; only an observed signal or
+query result does.
 
 Each connected vehicle has isolated profiles, DBC mappings, subscriptions,
 state, and transport.

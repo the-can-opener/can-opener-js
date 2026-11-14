@@ -1,0 +1,78 @@
+manifest: 1
+format: 2
+id: org.canopener.universal.obd
+version: 2.0.0
+name: Universal OBD illustrative bindings
+vss: '6.1'
+channels:
+  vehicle:
+    protocol: can
+    configuration: runtime
+endpoints:
+  engine:
+    channel: vehicle
+    protocol: isotp
+    tx: 7E0
+    rx:
+    - 7E8
+    id_format: standard
+    timeout_ms: 500
+properties:
+  Vehicle.Speed:
+    aliases:
+    - SPEED
+    read:
+      query:
+        endpoint: engine
+        request: 01 0D
+        response:
+          prefix: 41 0D
+          min_data_bytes: 1
+        decode:
+          byte: 0
+          bytes: 1
+          type: uint
+  Vehicle.Powertrain.CombustionEngine.Speed:
+    aliases:
+    - RPM
+    read:
+      query:
+        endpoint: engine
+        request: 01 0C
+        response:
+          prefix: 41 0C
+          min_data_bytes: 2
+        decode:
+          byte: 0
+          bytes: 2
+          type: uint
+          scale: 0.25
+  Vehicle.VehicleIdentification.VIN:
+    aliases:
+    - VIN
+    read:
+      query:
+        endpoint: engine
+        request: 09 02
+        response:
+          prefix: 49 02 01
+          min_data_bytes: 17
+        decode:
+          byte: 0
+          bytes: 17
+          type: ascii
+queries:
+  SUPPORTED_PIDS_01_20:
+    description: Supported mode 01 PID bitmap.
+    endpoint: engine
+    request: 01 00
+    response:
+      prefix: 41 00
+      min_data_bytes: 4
+    decode:
+      byte: 0
+      bytes: 4
+      type: hex
+    datatype: string
+fixtures:
+- fixtures.yaml

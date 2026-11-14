@@ -39,18 +39,94 @@ const car = await vv.connect({
 const rpmSubscribed = await car.subscribe("ENGINE_RPM"); // true
 
 // Or subscribe to related signals at once.
-const bodySubscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]); // true
+const bodySubscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "Vehicle.Body.Lights.Beam.High.IsOn"]); // true
 const activeSubscriptions = car.subscriptionCount();
 
 const speed = await car.query("VEHICLE_SPEED");
 const rpm = car.state.engine_rpm;
 const alsoRpm = car.state.get<number>("ENGINE_RPM");
 
-await car.action("HORN");
+await car.set("Vehicle.Body.Horn.IsActive", true);
 
 await car.unsubscribe("ENGINE_RPM");
-await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
+await car.unsubscribe(["TURN_SIGNAL_LEFT", "Vehicle.Body.Lights.Beam.High.IsOn"]);
 ```
+
+## Profile formats
+
+Format 2 of the Vehicle Profile Standard is the default. The canonical
+specification, the VSS catalog, the keyword vocabulary, and example packages
+live in [the-can-opener/vehicle-profile-spec](https://github.com/the-can-opener/vehicle-profile-spec).
+
+A format 2 package is a manifest (`manifest: 1`, `format: 2`) with the
+documents and DBC files it lists. Pass the manifest as `content` and each
+listed document under `documents`, named by the path the manifest gives it:
+
+```ts
+const car = await vv.connect({
+  id: "versa",
+  transport,
+  profiles: [{
+    name: "org.canopener.nissan.versa",
+    content: manifestYaml,
+    documents: [
+      { name: "base.yaml", content: baseYaml },
+      { name: "body.yaml", content: bodyYaml },
+    ],
+    dbcFiles: [{ name: "signals.dbc", content: signalsDbc }],
+  }],
+});
+```
+
+A loaded vehicle exposes properties keyed by VSS path, plus named queries and
+named actions for what has no VSS path. The VSS methods take VSS paths only:
+
+```ts
+await car.subscribe("Vehicle.Speed");
+car.state.get<number>("Vehicle.Speed");
+
+await car.read<number>("Vehicle.Speed");                    // asks the ECU when the property has a query
+await car.set("Vehicle.Cabin.IsCentralLockEngaged", true);  // "acknowledged" | "sent" | "rejected" | "unknown"
+await car.invoke("SIGNAL_OFF");                             // named action
+await car.query("SUPPORTED_PIDS_01_20");                    // named query
+```
+
+A write never changes `car.state`; only an observation of the property does.
+Setting a target the package has no request for throws and sends nothing.
+
+The alias methods take legacy keywords only, never a VSS path. A property
+alias names a path (`SPEED`, `LOCKED`). A command alias names one write target
+(`LOCK` writes `true`, `UNLOCK` writes `false`, `HORN` writes `true`) or a
+named action (`SIGNAL_OFF`):
+
+```ts
+await car.alias.read("SPEED");
+await car.alias.subscribe("SPEED");          // the value lands in state under "Vehicle.Speed"
+await car.alias.set("DRIVER_TEMP_SETTING", 22);
+await car.alias.command("LOCK");             // same request as set("Vehicle.Cabin.IsCentralLockEngaged", true)
+car.alias.list();                            // every alias the loaded profiles answer to
+```
+
+Passing `SPEED` or `LOCK` to a VSS method throws, and so does passing a VSS
+path or a command alias to `alias.read`, `alias.subscribe`, or `alias.set`.
+
+`allowedKeys` on a profile source limits what loads from it: `signals` and
+`queries` list the property paths (and named queries) to keep, `actions` lists
+the writable paths and named actions. A write case name such as
+`Vehicle.Cabin.IsCentralLockEngaged=true` in `actions` keeps that one case of
+the property. An omitted list keeps everything of that kind.
+
+Format 1 (`version: 1` and `version: 1.1`) is legacy and still loads. The
+loader maps its keywords onto VSS paths with the spec vocabulary: a `SPEED`
+query becomes the query of `Vehicle.Speed`, `DOORS.lock` becomes the `true`
+target of `Vehicle.Cabin.IsCentralLockEngaged`. A keyword the vocabulary gives
+no path keeps its original name, so `ENGINE_RPM` and `VEHICLE_SPEED` in the
+examples below still work as written. The rest of this README describes format
+1 profiles.
+
+Not supported yet in format 2: a `repeat` write and a request longer than one
+ISO-TP frame load as unavailable and throw with the reason when used. A
+package whose `depends` id is not loaded before it is skipped with a warning.
 
 ## Core Ideas
 
@@ -110,7 +186,7 @@ legacy tests. In profile-backed vehicles, executable names come from YAML
 `queries`, `actions`, and `signals` declarations.
 
 See the [Vehicle Profile and Library Specification](docs/vehicle-profile-spec.md)
-for YAML profiles, DBC files, capabilities, and the library contract, and
+for legacy format 1 YAML profiles, DBC files, capabilities, and the library contract, and
 [Vehicle Keywords](docs/vehicle-keywords.md) for the common capability names
 profiles should use. See the
 [BLE Transport Protocol](docs/can-opener-se-ble-protocol.md) and
@@ -179,10 +255,10 @@ await car.unsubscribe("ENGINE_RPM");
 You can also declare related subscriptions together:
 
 ```ts
-const subscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]); // true
+const subscribed = await car.subscribe(["TURN_SIGNAL_LEFT", "Vehicle.Body.Lights.Beam.High.IsOn"]); // true
 const activeCount = car.subscriptionCount(); // 2
 
-await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
+await car.unsubscribe(["TURN_SIGNAL_LEFT", "Vehicle.Body.Lights.Beam.High.IsOn"]);
 ```
 
 Profile-backed subscriptions use names declared under YAML `signals`. Without
@@ -216,10 +292,13 @@ car.unsubscribeQuery(speedSubscription);
 
 ## Queries
 
-Use `query()` for names declared under profile `queries`:
+Use `read()` for a property with a query binding, and `query()` for a named
+query, which is a name declared under profile `queries` that has no VSS path:
 
 ```ts
-const speed = await car.query<number>("SPEED");
+const speed = await car.read<number>("Vehicle.Speed");
+const sameSpeed = await car.alias.read<number>("SPEED");
+const supported = await car.query("SUPPORTED_PIDS_01_20");
 ```
 
 The YAML profile describes the endpoint, request bytes, accepted response IDs,
@@ -233,15 +312,17 @@ signal error.
 
 ## Actions
 
-Use `action()` for names declared under profile `actions`:
+Use `set()` to write a property and `invoke()` for a named action, which is a
+name declared under profile `actions` that has no single VSS actuator:
 
 ```ts
-await car.action("flash_lights");
+await car.set("Vehicle.Body.Horn.IsActive", true);
+await car.invoke("FLASH_LIGHTS");
 ```
 
 Actions can be request-only, verified request/response, or multi-step flows.
-Legacy raw DBC-only vehicles can still use `action()` with action options to send
-encoded frame signals.
+Raw DBC-only vehicles, with no profile loaded, can still use `action()` with
+action options to send encoded frame signals.
 
 ## Vehicle State
 
@@ -259,7 +340,8 @@ dispose();
 ```
 
 State keys are stored by the subscribed name. In profile-backed vehicles, that
-is the YAML `signals` or `queries` key. Property access also accepts common
+is the VSS path, or the YAML `signals` or `queries` key for a format 1 keyword
+outside the vocabulary. Property access also accepts common
 camelCase or snake_case variants by converting them to upper snake case.
 
 ## Transport
@@ -409,7 +491,16 @@ npm run build
 ```
 
 The test suite uses `MockTransport` to simulate PID responses, action sends,
-subscription registration, and incoming CAN frames.
+subscription registration, and incoming CAN frames. The example packages of
+the vehicle-profile-spec repository are copied under `tests/fixtures/spec` and
+their fixture files run as tests.
+
+The keyword vocabulary and the VSS leaf map under `src/profile/loaders` are
+generated from a checkout of the spec repository:
+
+```sh
+node scripts/generate-vss-leaves.mjs ../vehicle-profile-spec
+```
 
 ## Out of scope for v1
 

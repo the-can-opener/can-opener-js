@@ -1,0 +1,33 @@
+manifest: 1
+format: 2
+id: org.canopener.nissan.versa
+version: 2.0.0
+name: "Nissan Versa format 1 migration \u2014 not physically verified"
+vss: '6.1'
+applies_to:
+  manufacturers:
+  - Nissan
+  models:
+  - Versa
+  years:
+  - range:
+    - 2007
+    - 2012
+dbc:
+  main:
+    path: signals.dbc
+    channel: can0
+documents:
+- path: base.yaml
+- path: body.yaml
+- path: powertrain.yaml
+- path: actions.yaml
+unmapped:
+- capability: TPS
+  reason: fractional decoder cannot preserve the integer VSS datatype
+  original:
+    monitor:
+      message: ENGINE_4
+      signal: TPS
+fixtures:
+- fixtures/body.yaml

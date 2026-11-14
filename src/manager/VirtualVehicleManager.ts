@@ -41,7 +41,7 @@ export class VirtualVehicleManager {
     ]);
 
     const busActivity = new BusActivityMonitor();
-    const subscriptions = new SubscriptionController(state, dbc, options.transport);
+    const subscriptions = new SubscriptionController(state, options.transport);
     const queries = new QueryController(state, dbc, options.transport, capabilities, busActivity);
     const queryRoundRobin = new QueryRoundRobinController(queries, busActivity);
     const actions = new ActionController(dbc, options.transport, capabilities);

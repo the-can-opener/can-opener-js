@@ -11,6 +11,10 @@ import {
 } from "../src/transport/slcanProtocol.js";
 import { bmwExtendedAddressingProfile as bmwProfile } from "./fixtures.js";
 
+const SPEED = "Vehicle.Speed";
+const RPM = "Vehicle.Powertrain.CombustionEngine.Speed";
+const VIN = "Vehicle.VehicleIdentification.VIN";
+
 class FakeSlcanPort implements SlcanBytePort {
   readonly written: string[] = [];
   onWrite: ((text: string) => void) | undefined;
@@ -181,7 +185,7 @@ describe("SlcanTransport", () => {
       profiles: [speedProfile],
     });
 
-    await expect(car.query<number>("SPEED")).resolves.toBe(88);
+    await expect(car.read<number>(SPEED)).resolves.toBe(88);
     expect(port.written.slice(0, 2)).toEqual(["S6\r", "O\r"]);
     expect(port.written.some((line) => line.startsWith("t7DF8"))).toBe(true);
     await car.disconnect();
@@ -201,7 +205,7 @@ describe("SlcanTransport", () => {
       profiles: [speedProfile],
     });
 
-    await expect(car.query<number>("RPM")).resolves.toBe(3000);
+    await expect(car.read<number>(RPM)).resolves.toBe(3000);
     await car.disconnect();
   });
 
@@ -221,7 +225,7 @@ describe("SlcanTransport", () => {
       profiles: [speedProfile],
     });
 
-    await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
+    await expect(car.read<string>(VIN)).resolves.toBe("1HGCM82633A004352");
     expect(port.written).toContain("t7E083000000000000000\r");
     await car.disconnect();
   });
@@ -240,7 +244,7 @@ describe("SlcanTransport", () => {
       profiles: [speedProfile],
     });
 
-    await expect(car.query<number>("SPEED")).resolves.toBe(88);
+    await expect(car.read<number>(SPEED)).resolves.toBe(88);
     await car.disconnect();
   });
 
@@ -433,7 +437,7 @@ describe("SlcanTransport with ISO-TP extended addressing", () => {
     };
     const car = await new VirtualVehicleManager().connect({ id: "bmw", transport: new SlcanTransport(port), profiles: [bmwProfile] });
 
-    await expect(car.query<string>("VIN")).resolves.toBe("1HGCM82633A004352");
+    await expect(car.read<string>(VIN)).resolves.toBe("1HGCM82633A004352");
     expect(port.written).toContain("t6F181230000000000000\r");
     await car.disconnect();
   });

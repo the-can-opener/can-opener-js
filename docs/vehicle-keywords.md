@@ -1,5 +1,11 @@
 # Vehicle Keywords
 
+> **Legacy.** These are the format 1 keywords. The current mapping of each
+> keyword to its VSS path, target, and state labels is the
+> [vocabulary of the Vehicle Profile Standard](https://github.com/the-can-opener/vehicle-profile-spec/blob/main/docs/vocabulary.yaml).
+> `can-opener-js` loads that vocabulary and accepts these keywords through the
+> alias methods (`vehicle.alias.read("SPEED")`, `vehicle.alias.command("LOCK")`).
+
 Profile spec version 1.1. The naming convention and value rules are defined in
 [Vehicle Profile Specification](./vehicle-profile-spec.md), section 3. This
 document is the registry of common keywords: the names a profile should use

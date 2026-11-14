@@ -1,0 +1,46 @@
+fixture: 1
+cases:
+- label: Exact numeric encoding
+  kind: write
+  path: Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature
+  target: 22
+  responses:
+  - CC DD
+  expect:
+    sent:
+    - AA BB 0C
+    result: acknowledged
+- label: Inexact target
+  kind: write
+  path: Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature
+  target: 22.25
+  expect:
+    error: INVALID_PACKAGE
+    sent: []
+- label: Acknowledgement timeout
+  kind: write
+  path: Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature
+  target: 22
+  responses: []
+  expect:
+    result: unknown
+    error: OUTCOME_UNKNOWN
+- label: Passive acquisition does not start polling
+  kind: signal
+  path: Vehicle.Cabin.HVAC.AmbientAirTemperature
+  frame:
+    id: '100'
+    data: '44'
+  expect:
+    value: 28
+    quality: valid
+    sent: []
+- label: Explicit shared query acquisition
+  kind: query
+  path: Vehicle.Cabin.HVAC.AmbientAirTemperature
+  responses:
+  - BB 01 44 0C
+  expect:
+    value: 28
+    sent:
+    - AA 01

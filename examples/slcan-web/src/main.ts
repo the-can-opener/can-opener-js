@@ -8,24 +8,25 @@ import {
 import profileYaml from "../nissan-versa-vehicle-profile-1-6/profile.yaml?raw";
 import signalsDbc from "../nissan-versa-vehicle-profile-1-6/signals.dbc?raw";
 
+// The profile is format 1; the loader maps its keywords onto these VSS paths.
 const SIGNALS = [
-  "SPEED",
-  "RPM",
-  "TPS",
-  "STEERING_ANGLE",
-  "BRAKE_LIGHTS",
-  "LOW_BEAMS",
-  "HIGH_BEAMS",
-  "LEFT_SIGNAL",
-  "RIGHT_SIGNAL",
-  "FRONT_LEFT_DOOR",
-  "FRONT_RIGHT_DOOR",
-  "REAR_LEFT_DOOR",
-  "REAR_RIGHT_DOOR",
+  "Vehicle.Speed",
+  "Vehicle.Powertrain.CombustionEngine.Speed",
+  "Vehicle.Powertrain.CombustionEngine.TPS",
+  "Vehicle.Chassis.SteeringWheel.Angle",
+  "Vehicle.Body.Lights.Brake.IsActive",
+  "Vehicle.Body.Lights.Beam.Low.IsOn",
+  "Vehicle.Body.Lights.Beam.High.IsOn",
+  "Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling",
+  "Vehicle.Body.Lights.DirectionIndicator.Right.IsSignaling",
+  "Vehicle.Cabin.Door.Row1.DriverSide.IsOpen",
+  "Vehicle.Cabin.Door.Row1.PassengerSide.IsOpen",
+  "Vehicle.Cabin.Door.Row2.DriverSide.IsOpen",
+  "Vehicle.Cabin.Door.Row2.PassengerSide.IsOpen",
 ] as const;
 
-// Triggers by name; stateful entities by `ENTITY.command`, the same action
-// `vehicle.action("DOORS", { value: "lock" })` runs.
+// Command aliases: `LOCK` writes `true` to Vehicle.Cabin.IsCentralLockEngaged,
+// the same request `vehicle.set("Vehicle.Cabin.IsCentralLockEngaged", true)` sends.
 const ACTIONS = [
   "ECU_WAKE",
   "HORN",
@@ -35,8 +36,8 @@ const ACTIONS = [
   "LEFT_SIGNAL",
   "RIGHT_SIGNAL",
   "SIGNAL_OFF",
-  "DOORS.lock",
-  "DOORS.unlock",
+  "LOCK",
+  "UNLOCK",
   "WIPERS",
 ] as const;
 
@@ -180,8 +181,8 @@ async function runAction(name: string): Promise<void> {
   actionBusy = true;
   setControlsEnabled(false);
   try {
-    const result = await vehicle.action(name);
-    trace("action", `${name} ${result === undefined ? "sent" : String(result)}`);
+    const result = await vehicle.alias.command(name);
+    trace("action", `${name} ${result}`);
   } catch (error: unknown) {
     trace("action", `${name} ${errorText(error)}`);
   } finally {

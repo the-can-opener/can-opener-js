@@ -1,0 +1,80 @@
+fixture: 1
+cases:
+- label: Low beam on
+  kind: signal
+  path: Vehicle.Body.Lights.Beam.Low.IsOn
+  frame:
+    id: 60D
+    data: 04 00 00 00 00 00 00 00
+  expect:
+    value: true
+- label: Short signal frame
+  kind: signal
+  path: Vehicle.Body.Lights.Beam.High.IsOn
+  frame:
+    id: 60D
+    data: '00'
+  expect:
+    quality: invalid
+    error: DECODE_ERROR
+- label: Driver door
+  kind: signal
+  path: Vehicle.Cabin.Door.Row1.DriverSide.IsOpen
+  frame:
+    id: 60D
+    data: 08 00 00 00 00 00 00 00
+  expect:
+    value: true
+- label: Horn acknowledged
+  kind: write
+  path: Vehicle.Body.Horn.IsActive
+  target: true
+  responses:
+  - 50 81
+  - 50 C0
+  - 70 30 01
+  expect:
+    sent:
+    - 10 81
+    - 10 C0
+    - 30 30 00 01
+    result: acknowledged
+- label: Unsupported horn off
+  kind: write
+  path: Vehicle.Body.Horn.IsActive
+  target: false
+  expect:
+    error: UNSUPPORTED
+    sent: []
+- label: Lock wildcard acknowledged
+  kind: write
+  path: Vehicle.Cabin.IsCentralLockEngaged
+  target: true
+  responses:
+  - 50 81
+  - 50 C0
+  - 70 38 01
+  expect:
+    sent:
+    - 10 81
+    - 10 C0
+    - 30 38 00 01
+    result: acknowledged
+- label: Unknown lock outcome
+  kind: write
+  path: Vehicle.Cabin.IsCentralLockEngaged
+  target: true
+  responses:
+  - 50 81
+  - 50 C0
+  expect:
+    result: unknown
+    error: OUTCOME_UNKNOWN
+- label: Failed acknowledgement
+  kind: write
+  path: Vehicle.Cabin.IsCentralLockEngaged
+  target: true
+  responses:
+  - 7F 10
+  expect:
+    error: NEGATIVE_RESPONSE

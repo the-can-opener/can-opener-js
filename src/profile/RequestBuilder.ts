@@ -135,6 +135,18 @@ export function stripExpectedPrefix(expect: ExpectPattern | undefined, payload: 
   return offset === undefined ? payload : payload.slice(offset + expect.pattern.length);
 }
 
+/**
+ * The bytes a format 2 decoder reads: everything after the validated
+ * response prefix, without single-frame padding.
+ */
+export function responseData(expect: ExpectPattern | undefined, payload: CanPayload): CanPayload {
+  if (expect === undefined) {
+    return payload;
+  }
+  const offset = expectedOffset(expect, payload);
+  return offset === undefined ? payload : dataAfterPattern(expect, payload, offset);
+}
+
 export function alignExpectedPrefix(expect: ExpectPattern | undefined, payload: CanPayload): CanPayload {
   if (expect === undefined || expect.exact || expect.pattern.length === 0) {
     return payload;
@@ -154,13 +166,36 @@ function expectedOffset(expect: ExpectPattern, payload: CanPayload): number | un
   if (payload.length < expect.pattern.length) {
     return undefined;
   }
-  if (matchesAt(expect, payload, 0)) {
+  if (matchesAt(expect, payload, 0) && hasMinData(expect, payload, 0)) {
     return 0;
   }
-  if (!expect.exact && payload.length > expect.pattern.length && matchesAt(expect, payload, 1)) {
+  if (
+    !expect.exact &&
+    payload.length > expect.pattern.length &&
+    matchesAt(expect, payload, 1) &&
+    hasMinData(expect, payload, 1)
+  ) {
     return 1;
   }
   return undefined;
+}
+
+function hasMinData(expect: ExpectPattern, payload: CanPayload, offset: number): boolean {
+  return expect.minDataBytes === undefined || dataAfterPattern(expect, payload, offset).length >= expect.minDataBytes;
+}
+
+/**
+ * A pattern found at offset 1 follows an ISO-TP single-frame PCI byte. Its
+ * low nibble is the payload length; bytes past it are frame padding.
+ */
+function dataAfterPattern(expect: ExpectPattern, payload: CanPayload, offset: number): CanPayload {
+  const start = offset + expect.pattern.length;
+  const pci = payload[0] ?? 0;
+  const length = pci & 0x0f;
+  const end = offset === 1 && (pci & 0xf0) === 0 && length >= expect.pattern.length
+    ? Math.min(payload.length, 1 + length)
+    : payload.length;
+  return payload.slice(start, end);
 }
 
 function matchesAt(expect: ExpectPattern, payload: CanPayload, offset: number): boolean {

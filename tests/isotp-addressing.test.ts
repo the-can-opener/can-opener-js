@@ -106,7 +106,7 @@ describe("ISO-TP addressing in request frames", () => {
       { canId: 0x6f1, dlc: 4, data: Uint8Array.of(0x12, 0x02, 0x3e, 0x00, 0, 0, 0, 0), bus: 0 },
       Uint8Array.of(0x7e, 0x00),
     );
-    await car.action("TESTER_PRESENT");
+    await car.invoke("TESTER_PRESENT");
     expect(transport.requests.at(-1)).toMatchObject({ isotpAddressing: { tx: 0x12, rx: 0xf1 } });
     expect(Array.from(transport.requests.at(-1)?.txFrame.data ?? [])).toEqual([0x12, 0x02, 0x3e, 0x00, 0, 0, 0, 0]);
     await car.disconnect();

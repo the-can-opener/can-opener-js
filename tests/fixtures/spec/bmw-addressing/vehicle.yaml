@@ -1,0 +1,58 @@
+manifest: 1
+format: 2
+id: org.example.isotp.addressing
+version: 2.0.0
+name: "ISO-TP extended and mixed addressing \u2014 not physically verified"
+vss: '6.1'
+endpoints:
+  dme:
+    protocol: isotp
+    tx: 6F1
+    rx:
+    - '612'
+    id_format: standard
+    timeout_ms: 500
+    addressing:
+      mode: extended
+      target_address: '12'
+      source_address: F1
+  body:
+    protocol: isotp
+    tx: 7A0
+    rx:
+    - 7A8
+    id_format: standard
+    timeout_ms: 500
+    addressing:
+      mode: mixed
+      address_extension: A5
+properties:
+  Vehicle.VehicleIdentification.VIN:
+    aliases:
+    - VIN
+    read:
+      query:
+        endpoint: dme
+        request: 22 F1 90
+        response:
+          prefix: 62 F1 90
+          min_data_bytes: 17
+        decode:
+          byte: 0
+          bytes: 17
+          type: ascii
+actions:
+  TESTER_PRESENT:
+    description: Keep the engine ECU diagnostic session alive.
+    endpoint: dme
+    request: 3E 00
+    expect:
+      prefix: 7E 00
+  BODY_TESTER_PRESENT:
+    description: Keep the body ECU diagnostic session alive.
+    endpoint: body
+    request: 3E 00
+    expect:
+      prefix: 7E 00
+fixtures:
+- fixtures.yaml

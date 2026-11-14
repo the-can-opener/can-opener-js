@@ -1,0 +1,92 @@
+manifest: 1
+format: 2
+id: org.example.canfd.dualbus
+version: 2.0.0
+name: "SYNTHETIC dual-bus CAN FD transport declarations \u2014 not a vehicle mapping"
+vss: '6.1'
+channels:
+  can0:
+    protocol: can
+    bitrate: 500000
+  can1:
+    protocol: canfd
+    bitrate: auto
+    data_bitrate: 2000000
+    fd:
+      tx_dl: 64
+endpoints:
+  obd:
+    channel: can1
+    protocol: isotp
+    tx: 7DF
+    rx:
+    - range:
+      - 7E8
+      - 7EF
+    responder: 7E8
+    id_format: standard
+    timeout_ms: 500
+  bcm:
+    channel: can1
+    protocol: isotp
+    tx: 7A0
+    rx:
+    - 7A8
+    id_format: standard
+    timeout_ms: 500
+    fd:
+      tx_dl: 8
+  legacy-ecu:
+    channel: can1
+    protocol: isotp
+    tx: 7B0
+    rx:
+    - 7B8
+    id_format: standard
+    timeout_ms: 500
+    fd: false
+  lamps:
+    channel: can0
+    protocol: can
+    tx: '123'
+    id_format: standard
+properties:
+  Vehicle.Speed:
+    aliases:
+    - SPEED
+    read:
+      query:
+        endpoint: obd
+        request: 01 0D
+        response:
+          prefix: 41 0D
+          min_data_bytes: 1
+        decode:
+          byte: 0
+          bytes: 1
+          type: uint
+  Vehicle.Cabin.Door.Row1.DriverSide.IsOpen:
+    read:
+      signal:
+        channel: can0
+        id: '100'
+        id_format: standard
+        length: 1
+        decode:
+          start_bit: 0
+          bits: 1
+          bit_order: lsb0
+          type: uint
+          enum:
+            '0': false
+            '1': true
+  Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling:
+    aliases:
+    - LEFT_SIGNAL
+    write:
+      cases:
+        'true':
+          endpoint: lamps
+          request: 01 00 00 00
+fixtures:
+- fixtures.yaml

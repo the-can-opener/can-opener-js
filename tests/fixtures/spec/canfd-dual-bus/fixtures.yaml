@@ -1,0 +1,34 @@
+fixture: 1
+cases:
+- label: Speed from the selected responder
+  kind: query
+  path: Vehicle.Speed
+  responses:
+  - id: 7E8
+    data: 41 0D 32
+  expect:
+    value: 50
+- label: Another responder in the range is ignored
+  kind: query
+  path: Vehicle.Speed
+  responses:
+  - id: 7E9
+    data: 41 0D 32
+  expect:
+    error: TIMEOUT
+- label: Door open on the classic bus
+  kind: signal
+  path: Vehicle.Cabin.Door.Row1.DriverSide.IsOpen
+  frame:
+    id: '100'
+    data: '01'
+  expect:
+    value: true
+- label: Raw frame sent on the classic bus
+  kind: write
+  path: Vehicle.Body.Lights.DirectionIndicator.Left.IsSignaling
+  target: true
+  expect:
+    sent:
+    - 01 00 00 00
+    result: sent

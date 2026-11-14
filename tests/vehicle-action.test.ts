@@ -9,6 +9,14 @@ import { MockTransport } from "../src/transport/index.js";
 import type { VehicleRequest, VehicleTransport } from "../src/transport/types.js";
 import { nissanSentraProfile, testVehicleProfile } from "./fixtures.js";
 
+const HORN = "Vehicle.Body.Horn.IsActive";
+/** Transport name of the request that writes `true` to the horn, which is what the HORN alias commands. */
+const HORN_WRITE = `${HORN}=true`;
+const LOCK = "Vehicle.Cabin.IsCentralLockEngaged";
+const TRUNK = "Vehicle.Body.Trunk.Rear.IsOpen";
+const WIPING_MODE = "Vehicle.Body.Windshield.Front.Wiping.Mode";
+const DRIVER_TEMPERATURE = "Vehicle.Cabin.HVAC.Station.Row1.Driver.Temperature";
+
 type HornBehavior =
   | "timeout-once"
   | "timeout-always"
@@ -50,7 +58,7 @@ class ActionRetryTransport extends MockTransport {
       }
       return undefined;
     }
-    if (req.signalName !== "HORN") {
+    if (req.signalName !== HORN_WRITE) {
       return undefined;
     }
 
@@ -119,7 +127,7 @@ actions:
 `,
 };
 
-describe("VirtualVehicle.action", () => {
+describe("VirtualVehicle writes and actions", () => {
   it("sends profile-declared action frames", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
@@ -129,17 +137,17 @@ describe("VirtualVehicle.action", () => {
       profiles: [testVehicleProfile],
     });
 
-    await car.action("HORN");
+    await expect(car.set(HORN, true)).resolves.toBe("sent");
 
     expect(transport.requests).toHaveLength(1);
     expect(transport.requests[0]).toMatchObject({
-      signalName: "HORN",
+      signalName: HORN_WRITE,
       expectCanResponse: false,
     });
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
   });
 
-  it("runs a present-tense command and records its value unchanged", async () => {
+  it("writes each command of a stateful entity as a target of its VSS path", async () => {
     const transport = new MockTransport();
     const car = await new VirtualVehicleManager().connect({
       id: "car-a",
@@ -170,6 +178,11 @@ actions:
         send: [0x03]
       unlock:
         send: [0x04]
+  MIRRORS:
+    endpoint: body
+    values:
+      fold:
+        send: [0x05]
 `,
       }],
     });
@@ -177,29 +190,30 @@ actions:
     transport.scriptPidResponse(frame(0x01), Uint8Array.from([0x41]));
     transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x00]));
 
-    await expect(car.action("TRUNK", { value: "open" })).resolves.toBe(true);
+    await expect(car.set(TRUNK, true)).resolves.toBe("acknowledged");
     expect(transport.requests).toHaveLength(1);
-    expect(transport.requests[0]).toMatchObject({ signalName: "TRUNK.open" });
+    expect(transport.requests[0]).toMatchObject({ signalName: `${TRUNK}=true` });
     expect(transport.requests[0]?.txFrame.data[0]).toBe(1);
-    expect(car.state.get("TRUNK")).toBe("open");
+    // A write is not an observation of the trunk, so state stays empty.
+    expect(car.state.get(TRUNK)).toBeUndefined();
 
-    // A rejected request leaves the recorded value alone.
-    await expect(car.action("TRUNK.close")).resolves.toBe(false);
-    expect(car.state.get("TRUNK")).toBe("open");
-
+    await expect(car.set(TRUNK, false)).resolves.toBe("rejected");
     transport.scriptPidResponse(frame(0x02), Uint8Array.from([0x42]));
-    await expect(car.action("TRUNK", { value: "close" })).resolves.toBe(true);
-    expect(car.state.get("TRUNK")).toBe("close");
+    await expect(car.set(TRUNK, false)).resolves.toBe("acknowledged");
 
-    await expect(car.action("DOORS", { value: "lock" })).resolves.toBeUndefined();
-    expect(car.state.get("DOORS")).toBe("lock");
-    await expect(car.action("DOORS.unlock")).resolves.toBeUndefined();
-    expect(car.state.get("DOORS")).toBe("unlock");
+    await expect(car.set(LOCK, true)).resolves.toBe("sent");
+    expect(transport.requests.at(-1)?.txFrame.data[0]).toBe(3);
+    await expect(car.alias.command("UNLOCK")).resolves.toBe("sent");
+    expect(transport.requests.at(-1)?.txFrame.data[0]).toBe(4);
 
-    await expect(car.action("TRUNK", { value: "ajar" })).rejects.toThrow(/Unknown vehicle action: TRUNK\.ajar/u);
+    // MIRRORS has no single VSS actuator, so its command stays a named action.
+    await expect(car.invoke("MIRRORS_FOLD")).resolves.toBe("sent");
+    expect(transport.requests.at(-1)?.txFrame.data[0]).toBe(5);
+
+    await expect(car.set(TRUNK, "ajar")).rejects.toThrow(`${TRUNK} takes a boolean`);
   });
 
-  it("encodes numeric action targets, enforces min/max bounds, and updates state with the number", async () => {
+  it("encodes numeric targets and enforces min/max bounds", async () => {
     const transport = new MockTransport();
     const profileSource: VehicleProfileSource = {
       ...testVehicleProfile,
@@ -230,7 +244,18 @@ actions:
       - ref: sequences.prep
       - send: [0x04, 0x2E, 0x12, 0x34, 0x00, 0x00, 0x00, 0x00]
         expect: [0x6E, 0x12, 0x34]
-  HORN:
+  DRIVER_TEMP_SETTING:
+    endpoint: climate
+    encode:
+      byte: 4
+      scale: 0.5
+      offset: -40
+      min: 16
+      max: 32
+      step: 0.5
+    send: [0x04, 0x2E, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00]
+    expect: [0x6E, 0x56, 0x78]
+  WASHER:
     endpoint: climate
     send: [0x01]
 `,
@@ -243,7 +268,7 @@ actions:
     const registry = new CapabilityRegistry();
     registry.load(new ProfileLoader().load([profileSource]));
     expect(registry.actionInput("CABIN_TEMP_SETPOINT")).toEqual({ min: 16, max: 32, step: 0.5 });
-    expect(registry.actionInput("HORN")).toBeUndefined();
+    expect(registry.actionInput("WASHER")).toBeUndefined();
     const prepFrame = { canId: 200, data: Uint8Array.from([0x02, 0x10, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00]) };
     // 22.5 C -> round((22.5 - (-40)) / 0.5) = 125 (0x7D)
     const set225Frame = { canId: 200, data: Uint8Array.from([0x04, 0x2E, 0x12, 0x34, 0x7D, 0x00, 0x00, 0x00]) };
@@ -253,21 +278,28 @@ actions:
     transport.scriptPidResponse(set225Frame, Uint8Array.from([0x6E, 0x12, 0x34]));
     transport.scriptPidResponse(set20Frame, Uint8Array.from([0x7F, 0x2E, 0x31]));
 
-    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 22.5 })).resolves.toBe(true);
+    // The vocabulary gives CABIN_TEMP_SETPOINT no VSS path, so it is a named action with an input.
+    await expect(car.invoke("CABIN_TEMP_SETPOINT", { value: 22.5 })).resolves.toBe("acknowledged");
     expect(transport.requests).toHaveLength(2);
     expect(transport.requests[0]?.txFrame.data).toEqual(prepFrame.data);
     expect(transport.requests[1]?.txFrame.data).toEqual(set225Frame.data);
-    expect(car.state.get<number>("CABIN_TEMP_SETPOINT")).toBe(22.5);
 
-    // A rejected response leaves the previous numeric target intact.
-    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 20 })).resolves.toBe(false);
-    expect(car.state.get<number>("CABIN_TEMP_SETPOINT")).toBe(22.5);
+    await expect(car.invoke("CABIN_TEMP_SETPOINT", { value: 20 })).resolves.toBe("rejected");
 
     // Out-of-bounds, missing value, or numeric target on a trigger action are rejected.
-    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 15 })).rejects.toThrow(/below minimum 16/u);
-    await expect(car.action("CABIN_TEMP_SETPOINT", { value: 33 })).rejects.toThrow(/exceeds maximum 32/u);
-    await expect(car.action("CABIN_TEMP_SETPOINT")).rejects.toThrow(/requires a numeric target value/u);
-    await expect(car.action("HORN", { value: 22 })).rejects.toThrow(/does not accept a numeric value/u);
+    await expect(car.invoke("CABIN_TEMP_SETPOINT", { value: 15 })).rejects.toThrow(/below minimum 16/u);
+    await expect(car.invoke("CABIN_TEMP_SETPOINT", { value: 33 })).rejects.toThrow(/exceeds maximum 32/u);
+    await expect(car.invoke("CABIN_TEMP_SETPOINT")).rejects.toThrow(/requires a numeric target value/u);
+    await expect(car.invoke("WASHER", { value: 22 })).rejects.toThrow(/does not accept a numeric value/u);
+
+    // DRIVER_TEMP_SETTING names a numeric VSS path, so its encode is the direct write of that path.
+    const driverSet225Frame = { canId: 200, data: Uint8Array.from([0x04, 0x2E, 0x56, 0x78, 0x7D, 0x00, 0x00, 0x00]) };
+    transport.scriptPidResponse(driverSet225Frame, Uint8Array.from([0x6E, 0x56, 0x78]));
+    await expect(car.set(DRIVER_TEMPERATURE, 22.5)).resolves.toBe("acknowledged");
+    expect(transport.requests.at(-1)?.txFrame.data).toEqual(driverSet225Frame.data);
+    await expect(car.alias.set("DRIVER_TEMP_SETTING", 22.5)).resolves.toBe("acknowledged");
+    await expect(car.set(DRIVER_TEMPERATURE, 33)).rejects.toThrow(/exceeds maximum 32/u);
+    await expect(car.set(DRIVER_TEMPERATURE, "warm")).rejects.toThrow(`${DRIVER_TEMPERATURE} takes a number`);
   });
 
   it("sends actions that declare inline request_id values", async () => {
@@ -295,11 +327,11 @@ actions:
       ],
     });
 
-    await car.action("WIPERS");
+    await expect(car.alias.command("WIPERS")).resolves.toBe("sent");
 
     expect(transport.requests).toHaveLength(1);
     expect(transport.requests[0]).toMatchObject({
-      signalName: "WIPERS",
+      signalName: `${WIPING_MODE}=MEDIUM`,
       expectCanResponse: false,
       txFrame: {
         canId: 0x35D,
@@ -329,11 +361,11 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
       ]);
       expect(transport.requests.map((request) => request.expectCanResponse)).toEqual([
         true,
@@ -351,11 +383,11 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
       ]);
     });
 
@@ -369,11 +401,11 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
       ]);
     });
 
@@ -386,8 +418,8 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      const result = car.action("HORN");
-      const hornAttempts = () => transport.requests.filter((request) => request.signalName === "HORN").length;
+      const result = car.alias.command("HORN");
+      const hornAttempts = () => transport.requests.filter((request) => request.signalName === HORN_WRITE).length;
 
       await vi.advanceTimersByTimeAsync(0);
       expect(hornAttempts()).toBe(1);
@@ -412,10 +444,10 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("unknown");
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
-        ...Array<string[]>(5).fill(["ECU_WAKE", "HORN"]).flat(),
+        HORN_WRITE,
+        ...Array<string[]>(5).fill(["ECU_WAKE", HORN_WRITE]).flat(),
       ]);
     });
 
@@ -428,13 +460,13 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
       ]);
     });
 
@@ -447,7 +479,7 @@ actions:
         profiles: [wakeRetryProfile],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("unknown");
       expect(transport.requests.filter((request) => request.signalName === "ECU_WAKE")).toHaveLength(5);
     });
   });
@@ -461,8 +493,8 @@ actions:
       profiles: [wakeRetryProfile],
     });
 
-    await expect(car.action("HORN")).resolves.toBe(false);
-    expect(transport.requests.map((request) => request.signalName)).toEqual(["HORN"]);
+    await expect(car.alias.command("HORN")).resolves.toBe("rejected");
+    expect(transport.requests.map((request) => request.signalName)).toEqual([HORN_WRITE]);
   });
 });
 
@@ -498,7 +530,7 @@ class BatchWakeTransport extends MockTransport {
 
   override async sendRequest(req: VehicleRequest): Promise<CanPayload | undefined> {
     // The first HORN attempt loses the ECU after the session prep step.
-    if (req.signalName === "HORN" && req.txFrame.data[2] === 0xc0) {
+    if (req.signalName === HORN_WRITE && req.txFrame.data[2] === 0xc0) {
       this.hornAttempts += 1;
       if (this.hornAttempts === 1) {
         this.requests.push(req);
@@ -546,18 +578,18 @@ const sleepingBusProfile: VehicleProfileSource = {
 `,
 };
 
-describe("VirtualVehicle.action batching", () => {
+describe("VirtualVehicle write batching", () => {
   it("sends a multi-step action as one same-bus batch", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     scriptNissanHorn(transport);
     const car = await manager.connect({ id: "car-a", transport, profiles: [nissanSentraProfile] });
 
-    await expect(car.action("HORN")).resolves.toBe(true);
+    await expect(car.alias.command("HORN")).resolves.toBe("acknowledged");
 
     expect(transport.batches).toHaveLength(1);
     const batch = transport.batches[0];
-    expect(batch).toMatchObject({ signalName: "HORN" });
+    expect(batch).toMatchObject({ signalName: HORN_WRITE });
     expect(batch?.steps.map((step) => Array.from(step.txFrame.data))).toEqual([SESSION_81, SESSION_C0, HORN_ON]);
     expect(batch?.steps.map((step) => step.expectCanResponse)).toEqual([true, true, true]);
     expect(batch?.steps.map((step) => step.timeoutMs)).toEqual([500, 500, 500]);
@@ -571,7 +603,7 @@ describe("VirtualVehicle.action batching", () => {
     scriptNissanHorn(mock);
     const car = await manager.connect({ id: "car-a", transport: withoutBatchSupport(mock), profiles: [nissanSentraProfile] });
 
-    await expect(car.action("HORN")).resolves.toBe(true);
+    await expect(car.alias.command("HORN")).resolves.toBe("acknowledged");
 
     expect(mock.batches).toHaveLength(0);
     expect(mock.requests).toHaveLength(3);
@@ -582,7 +614,7 @@ describe("VirtualVehicle.action batching", () => {
     const transport = new MockTransport();
     const car = await manager.connect({ id: "car-a", transport, profiles: [testVehicleProfile] });
 
-    await car.action("HORN");
+    await car.alias.command("HORN");
 
     expect(transport.batches).toHaveLength(0);
     expect(transport.requests).toHaveLength(1);
@@ -620,7 +652,7 @@ actions:
       ],
     });
 
-    await expect(car.action("UNLOCK")).resolves.toBe(false);
+    await expect(car.set(LOCK, false)).resolves.toBe("rejected");
 
     expect(transport.batches).toHaveLength(0);
     // Sequential mode gates each step on the previous response.
@@ -633,7 +665,7 @@ actions:
     scriptNissanHorn(transport, [0x7f, 0x30, 0x22]);
     const car = await manager.connect({ id: "car-a", transport, profiles: [nissanSentraProfile] });
 
-    await expect(car.action("HORN")).resolves.toBe(false);
+    await expect(car.alias.command("HORN")).resolves.toBe("rejected");
     expect(transport.batches).toHaveLength(1);
   });
 
@@ -666,7 +698,7 @@ actions:
       ],
     });
 
-    await expect(car.action("LIGHT_SHOW")).resolves.toBeUndefined();
+    await expect(car.invoke("LIGHT_SHOW")).resolves.toBe("sent");
 
     expect(transport.batches.map((batch) => [batch.bus, batch.steps.length])).toEqual([[1, 2], [0, 2]]);
     expect(transport.batches[0]?.steps[0]?.delayAfterMs).toBe(50);
@@ -704,16 +736,16 @@ actions:
         ],
       });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
 
-      expect(transport.batches.map((batch) => batch.signalName)).toEqual(["HORN", "HORN"]);
+      expect(transport.batches.map((batch) => batch.signalName)).toEqual([HORN_WRITE, HORN_WRITE]);
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
-        "HORN",
+        HORN_WRITE,
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
-        "HORN",
-        "HORN",
+        HORN_WRITE,
+        HORN_WRITE,
+        HORN_WRITE,
       ]);
     });
 
@@ -723,23 +755,23 @@ actions:
       scriptNissanHorn(transport);
       const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
 
       expect(transport.batches.map((batch) => [batch.signalName, batch.continueOnError ?? false])).toEqual([
-        ["HORN", false],
+        [HORN_WRITE, false],
         ["ECU_WAKE", true],
-        ["HORN", false],
+        [HORN_WRITE, false],
       ]);
       // The device stops the HORN batch at the unacknowledged first frame but
       // keeps going through the wake sequence.
       expect(transport.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
         "ECU_WAKE",
         "ECU_WAKE",
-        "HORN",
-        "HORN",
-        "HORN",
+        HORN_WRITE,
+        HORN_WRITE,
+        HORN_WRITE,
       ]);
     });
 
@@ -749,14 +781,14 @@ actions:
       scriptNissanHorn(transport);
       const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
 
       expect(transport.batches.map((batch) => batch.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
-        "HORN",
+        HORN_WRITE,
       ]);
     });
 
@@ -765,11 +797,11 @@ actions:
       const transport = new SleepingBusTransport(Number.POSITIVE_INFINITY);
       const car = await manager.connect({ id: "car-a", transport, profiles: [sleepingBusProfile] });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe("unknown");
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("unknown");
 
       expect(transport.batches.map((batch) => batch.signalName)).toEqual([
-        "HORN",
-        ...Array<string[]>(5).fill(["ECU_WAKE", "HORN"]).flat(),
+        HORN_WRITE,
+        ...Array<string[]>(5).fill(["ECU_WAKE", HORN_WRITE]).flat(),
       ]);
     });
 
@@ -779,17 +811,17 @@ actions:
       scriptNissanHorn(mock);
       const car = await manager.connect({ id: "car-a", transport: withoutBatchSupport(mock), profiles: [sleepingBusProfile] });
 
-      await expect(withSettleDelays(car.action("HORN"))).resolves.toBe(true);
+      await expect(withSettleDelays(car.alias.command("HORN"))).resolves.toBe("acknowledged");
 
       expect(mock.batches).toHaveLength(0);
       expect(mock.requests.map((request) => request.signalName)).toEqual([
-        "HORN",
+        HORN_WRITE,
         "ECU_WAKE",
         "ECU_WAKE",
         "ECU_WAKE",
-        "HORN",
-        "HORN",
-        "HORN",
+        HORN_WRITE,
+        HORN_WRITE,
+        HORN_WRITE,
       ]);
     });
   });

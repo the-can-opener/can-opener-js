@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { loadFormat1 } from "../src/profile/loaders/format1.js";
 import { ProfileLoader } from "../src/profile/ProfileLoader.js";
+import type { VehicleProfileSource } from "../src/profile/types.js";
 import { testVehicleDbc } from "./fixtures.js";
 
-describe("ProfileLoader", () => {
+/** Format 1 profiles as parsed, before `ProfileLoader` maps them onto VSS paths. */
+function loadFormat1Profiles(sources: readonly VehicleProfileSource[]) {
+  return sources.map(loadFormat1);
+}
+
+describe("ProfileLoader with format 1 profiles", () => {
   it("skips placeholder actions that do not declare send bytes or steps", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/placeholder-actions/profile.yaml",
         content: `version: 1
@@ -34,7 +41,7 @@ actions:
   });
 
   it("loads monitor signals from profiles with skipped placeholder actions", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/placeholder-actions/profile.yaml",
         content: `version: 1
@@ -64,7 +71,7 @@ actions:
   });
 
   it("loads actions that declare inline request_id and request bytes", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/inline-request/profile.yaml",
         content: `version: 1
@@ -100,7 +107,7 @@ actions:
   });
 
   it("loads per-step timing and the action batch opt-out", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/step-timing/profile.yaml",
         content: `version: 1
@@ -150,7 +157,7 @@ actions:
   });
 
   it("expands a stateful entity into one action per command", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/value-actions/profile.yaml",
         content: `version: 1
@@ -246,10 +253,11 @@ actions:
       "current/profile.yaml",
       "original/profile.yaml",
     ]);
-    expect(profiles.flatMap((profile) => profile.actions.map((action) => action.name))).toEqual([
-      "WIPERS",
-      "LIGHTS",
+    // WIPERS is a vocabulary keyword, so it becomes a write; LIGHTS keeps its name.
+    expect(profiles[0]?.properties.map((property) => property.path)).toEqual([
+      "Vehicle.Body.Windshield.Front.Wiping.Mode",
     ]);
+    expect(profiles[1]?.actions.map((action) => action.name)).toEqual(["LIGHTS"]);
   });
 
   it("rejects malformed value branches", () => {
@@ -319,7 +327,7 @@ actions:
   });
 
   it("loads numeric encode actions with byte shorthand, bit ranges, and multi-step sequences", () => {
-    const [profile] = new ProfileLoader().load([
+    const [profile] = loadFormat1Profiles([
       {
         name: "test/numeric-encode/profile.yaml",
         content: `version: 1.1

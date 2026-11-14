@@ -5,6 +5,9 @@ import type { VehicleProfileSource } from "../src/profile/types.js";
 import { MockTransport } from "../src/transport/index.js";
 import { testVehicleProfile } from "./fixtures.js";
 
+const HIGH_BEAM = "Vehicle.Body.Lights.Beam.High.IsOn";
+const LOW_BEAM = "Vehicle.Body.Lights.Beam.Low.IsOn";
+
 describe("VirtualVehicle.subscribe", () => {
   it("decodes incoming frames into vehicle state", async () => {
     const manager = new VirtualVehicleManager();
@@ -45,7 +48,7 @@ describe("VirtualVehicle.subscribe", () => {
     expect(transport.monitorCanIds.size).toBe(0);
   });
 
-  it("merges keyword subscriptions that share one CAN frame", async () => {
+  it("merges subscriptions that share one CAN frame", async () => {
     const manager = new VirtualVehicleManager();
     const transport = new MockTransport();
     const car = await manager.connect({
@@ -55,7 +58,7 @@ describe("VirtualVehicle.subscribe", () => {
     });
 
     await expect(car.subscribe("TURN_SIGNAL_LEFT")).resolves.toBe(true);
-    await expect(car.subscribe("HIGH_BEAMS")).resolves.toBe(true);
+    await expect(car.subscribe(HIGH_BEAM)).resolves.toBe(true);
 
     expect(Array.from(transport.monitorCanIds)).toEqual([300]);
     expect(car.subscriptionCount()).toBe(2);
@@ -74,14 +77,15 @@ describe("VirtualVehicle.subscribe", () => {
     transport.emitFrame(frame);
 
     expect(car.state.turn_signal_left).toBe(1);
-    expect(car.state.high_beams).toBe(1);
+    // HIGH_BEAMS is a vocabulary keyword, so it lands on its VSS path as a boolean.
+    expect(car.state.get<boolean>(HIGH_BEAM)).toBe(true);
 
     await car.unsubscribe("TURN_SIGNAL_LEFT");
 
     expect(Array.from(transport.monitorCanIds)).toEqual([300]);
     expect(car.subscriptionCount()).toBe(1);
 
-    await car.unsubscribe("HIGH_BEAMS");
+    await car.unsubscribe(HIGH_BEAM);
 
     expect(transport.monitorCanIds.size).toBe(0);
     expect(car.subscriptionCount()).toBe(0);
@@ -96,18 +100,18 @@ describe("VirtualVehicle.subscribe", () => {
       profiles: [testVehicleProfile],
     });
 
-    await expect(car.subscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"])).resolves.toBe(true);
+    await expect(car.subscribe(["TURN_SIGNAL_LEFT", HIGH_BEAM])).resolves.toBe(true);
 
     expect(Array.from(transport.monitorCanIds)).toEqual([300]);
     expect(car.subscriptionCount()).toBe(2);
 
-    await car.unsubscribe(["TURN_SIGNAL_LEFT", "HIGH_BEAMS"]);
+    await car.unsubscribe(["TURN_SIGNAL_LEFT", HIGH_BEAM]);
 
     expect(transport.monitorCanIds.size).toBe(0);
     expect(car.subscriptionCount()).toBe(0);
   });
 
-  it("uses DBC enum labels by default and profile normalization when declared", async () => {
+  it("types DBC enum labels and profile normalization onto the VSS datatype", async () => {
     const manager = new VirtualVehicleManager();
     const defaultTransport = new MockTransport();
     const defaultCar = await manager.connect({
@@ -118,10 +122,10 @@ describe("VirtualVehicle.subscribe", () => {
       })],
     });
 
-    await defaultCar.subscribe("LOW_BEAMS");
+    await defaultCar.subscribe(LOW_BEAM);
     defaultTransport.emitFrame(defaultCar.dbc.encodeSignal("HEADLAMP_STATE", 1));
 
-    expect(defaultCar.state.get<string>("LOW_BEAMS")).toBe("on");
+    expect(defaultCar.state.get<boolean>(LOW_BEAM)).toBe(true);
 
     const remapTransport = new MockTransport();
     const remapCar = await manager.connect({
@@ -136,10 +140,10 @@ describe("VirtualVehicle.subscribe", () => {
       })],
     });
 
-    await remapCar.subscribe("LOW_BEAMS");
+    await remapCar.subscribe(LOW_BEAM);
     remapTransport.emitFrame(remapCar.dbc.encodeSignal("HEADLAMP_STATE", 1));
 
-    expect(remapCar.state.get<string>("LOW_BEAMS")).toBe("on");
+    expect(remapCar.state.get<boolean>(LOW_BEAM)).toBe(true);
   });
 
   it("tracks BLE frame refresh rate even when decoded values stay the same", async () => {

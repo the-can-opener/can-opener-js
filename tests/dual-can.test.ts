@@ -17,7 +17,7 @@ describe("dual-CAN profile contract", () => {
       { bus: 1, bitrate: "auto", dataBitrate: 2000000 },
     ]);
     expect(profile.endpoints.find((endpoint) => endpoint.name === "diagnostics")?.bus).toBe(1);
-    expect(profile.signals.find((signal) => signal.name === "RPM_CAN1")?.bus).toBe(1);
+    expect(profile.properties.find((property) => property.path === "RPM_CAN1")?.signal?.bus).toBe(1);
     expect(profile.actions.find((action) => action.name === "INLINE_CAN1")?.steps[0]?.bus).toBe(1);
   });
 

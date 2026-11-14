@@ -3,10 +3,29 @@ import type { CanFdTxDl } from "../transport/types.js";
 
 export type ProfileByte = number | "*";
 
+/** A value of a VSS property: boolean, number, or string per its datatype. */
+export type VssValue = boolean | number | string;
+
 export interface VehicleProfileSource {
   name: string;
+  /** Format 2: the package manifest. Format 1: the profile. */
   content: string;
   dbcFiles: DbcFile[];
+  /** Format 2 documents, named by the path the manifest lists them under. */
+  documents?: { name: string; content: string }[];
+  /**
+   * When a list is present, keys missing from it are dropped after the
+   * package is composed. `signals` filters passive read bindings by property
+   * key, `queries` filters property query bindings and named queries, and
+   * `actions` filters property writes and named actions. A property path in
+   * `actions` keeps every write of that property; a write case name such as
+   * `Vehicle.Cabin.IsCentralLockEngaged=true` keeps that one case.
+   */
+  allowedKeys?: {
+    signals?: string[];
+    queries?: string[];
+    actions?: string[];
+  };
 }
 
 export type CanBitrate = number | "auto";
@@ -89,6 +108,40 @@ export interface ResolvedProfileEndpoint extends ProfileEndpoint {
 export interface ExpectPattern {
   pattern: ProfileByte[];
   exact: boolean;
+  /** Bytes the response must carry after the pattern. Omitted: none. */
+  minDataBytes?: number;
+}
+
+/**
+ * A format 2 decoder, as the spec writes it. `byte`/`bytes` select whole
+ * bytes; `start_bit`/`bits`/`bit_order` select a bit field.
+ */
+export interface FrameDecoder {
+  type: "uint" | "int" | "ascii" | "hex";
+  byte?: number;
+  bytes?: number;
+  endian?: "big" | "little";
+  start_bit?: number;
+  bits?: number;
+  bit_order?: "msb0" | "lsb0";
+  scale?: number;
+  offset?: number;
+  enum?: Record<string, VssValue>;
+  invalid_raw?: number[];
+  unit?: string;
+  datatype?: string;
+}
+
+/** Decodes the bytes after the validated response prefix. */
+export interface FrameDecoderRef {
+  type: "frame";
+  decode: FrameDecoder;
+}
+
+/** Decodes several named outputs from one response. */
+export interface OutputsDecoderRef {
+  type: "outputs";
+  outputs: Record<string, FrameDecoder>;
 }
 
 export interface DbcDecoderRef {
@@ -102,10 +155,16 @@ export interface BuiltInDecoderRef {
   length?: number;
 }
 
-export type QueryDecoder = DbcDecoderRef | BuiltInDecoderRef;
+export type QueryDecoder = DbcDecoderRef | BuiltInDecoderRef | FrameDecoderRef | OutputsDecoderRef;
 
 export interface ProfileValueNormalization {
-  enum?: Record<string, string>;
+  enum?: Record<string, VssValue>;
+  /** A value missing from `enum` is invalid and is not published. */
+  strict?: boolean;
+  /** VSS datatype the value is converted to after `enum`. */
+  datatype?: string;
+  /** VSS unit of the property. A DBC value in a known other unit is scaled into it. */
+  unit?: string;
 }
 
 export interface ProfileNumberInput {
@@ -123,6 +182,19 @@ export interface ProfileStepEncoding {
   offset?: number;
 }
 
+/** A request field that carries an input value. The encoding must be exact. */
+export interface ProfileEncodedField {
+  /** Input name. A property write supplies its target as `value`. */
+  input: string;
+  /** Index of the field's first byte in `send`. */
+  at: number;
+  bytes: number;
+  signed: boolean;
+  endian: "big" | "little";
+  scale: number;
+  offset: number;
+}
+
 export interface RequestStep {
   endpoint?: string;
   requestId?: number;
@@ -136,6 +208,8 @@ export interface RequestStep {
   fd?: boolean;
   send: Uint8Array;
   encode?: ProfileStepEncoding;
+  /** Format 2 encoded request parts. */
+  fields?: ProfileEncodedField[];
   expect?: ExpectPattern;
   /** Overrides the endpoint response timeout for this step. */
   timeoutMs?: number;
@@ -152,6 +226,11 @@ export interface ProfileQuery {
   length?: number;
   timeoutMs?: number;
   normalize?: ProfileValueNormalization;
+  /** Named queries only: the declared datatype and unit of the result. */
+  datatype?: string;
+  unit?: string;
+  /** Why this query loaded but cannot run. */
+  unavailable?: string;
 }
 
 export interface ProfileAction {
@@ -176,6 +255,8 @@ export interface ProfileAction {
    */
   batch?: boolean;
   steps: RequestStep[];
+  /** Why this action loaded but cannot run, e.g. a request longer than one ISO-TP frame. */
+  unavailable?: string;
 }
 
 /**
@@ -189,21 +270,90 @@ export interface ProfileAction {
  */
 export type ActionRunResult = boolean | "unknown" | undefined;
 
-export interface ProfileMonitorSignal {
+/**
+ * Outcome of a property write, a named action, or a command alias:
+ * - `"acknowledged"`: every expected response matched.
+ * - `"sent"`: the request declares no expected response.
+ * - `"rejected"`: the ECU answered, but not with the expected response.
+ * - `"unknown"`: the request reached the bus after an ECU wake, but its
+ *   outcome could not be verified.
+ */
+export type WriteResult = "acknowledged" | "sent" | "rejected" | "unknown";
+
+interface ProfileSignalBase {
+  /** State key: the VSS path, or the original keyword outside the vocabulary. */
   name: string;
-  message: string;
-  signal: string;
   /** Logical CAN controller. Omitted values default to bus 0. */
   bus?: number;
+}
+
+export interface ProfileDbcSignal extends ProfileSignalBase {
+  message: string;
+  signal: string;
+  /**
+   * What the DBC yields before `normalize`: the `VAL_` label when one exists
+   * (format 1, the default), the physical value, or the raw integer.
+   */
+  value?: "label" | "physical" | "raw";
   normalize?: ProfileValueNormalization;
 }
 
+/** A signal decoded straight from a CAN frame, without a DBC. */
+export interface ProfileFrameSignal extends ProfileSignalBase {
+  frame: {
+    canId: number;
+    /** Required CAN data length in bytes. */
+    length: number;
+    decode: FrameDecoder;
+  };
+}
+
+export type ProfileMonitorSignal = ProfileDbcSignal | ProfileFrameSignal;
+
+export interface ProfileWrite {
+  /** One action per canonical target: `"true"`, `"false"`, an allowed value, or a decimal number. */
+  cases?: Record<string, ProfileAction>;
+  /** A request that carries the target itself. Used when no case matches. */
+  direct?: ProfileAction;
+  constraints?: ProfileNumberInput;
+}
+
+export interface ProfileProperty {
+  /** VSS path. A format 1 keyword outside the vocabulary keeps its original name. */
+  path: string;
+  datatype?: string;
+  unit?: string;
+  allowed?: string[];
+  /** Legacy names the package declares for this property. */
+  aliases?: string[];
+  /** Passive read from broadcast CAN traffic. */
+  signal?: ProfileMonitorSignal;
+  /** Active read: a request sent to an ECU. */
+  query?: ProfileQuery;
+  write?: ProfileWrite;
+}
+
+/**
+ * A legacy keyword. A property alias names a path (`SPEED`). A command alias
+ * names one write target (`LOCK` writes `true`) or a named action.
+ */
+export type ProfileAlias =
+  | { name: string; kind: "property"; path: string; declared: boolean }
+  | { name: string; kind: "command"; path: string; target: VssValue; declared: boolean }
+  | { name: string; kind: "command"; action: string; declared: boolean };
+
 export interface LoadedVehicleProfile {
   name: string;
+  /** Format 2 package id. */
+  id?: string;
+  /** Format 2 package ids that must be loaded before this one. */
+  depends?: string[];
   dbcFiles: DbcFile[];
   canBuses: ProfileCanBusConfig[];
   endpoints: ProfileEndpoint[];
+  properties: ProfileProperty[];
+  /** Named queries: reads with no VSS path. */
   queries: ProfileQuery[];
+  /** Named actions: commands with no single VSS actuator. */
   actions: ProfileAction[];
-  signals: ProfileMonitorSignal[];
 }

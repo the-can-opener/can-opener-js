@@ -5,6 +5,11 @@ import { VirtualVehicleManager } from "../src/manager/VirtualVehicleManager.js";
 import { MockTransport } from "../src/transport/index.js";
 import { universalPidProfile } from "./fixtures.js";
 
+const RPM = "Vehicle.Powertrain.CombustionEngine.Speed";
+const SPEED = "Vehicle.Speed";
+const FUEL_LEVEL = "Vehicle.Powertrain.FuelSystem.RelativeLevel";
+const ECT = "Vehicle.Powertrain.CombustionEngine.EngineCoolant.Temperature";
+
 describe("QueryRoundRobinController", () => {
   it("reports measured Hz for active round-robin queries", async () => {
     vi.useFakeTimers();
@@ -17,26 +22,26 @@ describe("QueryRoundRobinController", () => {
         profiles: [universalPidProfile],
       });
 
-      vehicle.updateQueryRoundRobin(["FUEL_LEVEL", "RPM", "SPEED"]);
+      vehicle.updateQueryRoundRobin([FUEL_LEVEL, RPM, SPEED]);
 
       expect(vehicle.queryRoundRobinStatus()).toEqual({
         hzByName: {
-          FUEL_LEVEL: 0,
-          RPM: 0,
-          SPEED: 0,
+          [FUEL_LEVEL]: 0,
+          [RPM]: 0,
+          [SPEED]: 0,
         },
-        names: ["FUEL_LEVEL", "RPM", "SPEED"],
+        names: [FUEL_LEVEL, RPM, SPEED],
         totalHz: 0,
         perQueryHz: 0,
       });
 
-      vehicle.updateQueryRoundRobin(["FUEL_LEVEL"]);
+      vehicle.updateQueryRoundRobin([FUEL_LEVEL]);
 
       expect(vehicle.queryRoundRobinStatus()).toEqual({
         hzByName: {
-          FUEL_LEVEL: 0,
+          [FUEL_LEVEL]: 0,
         },
-        names: ["FUEL_LEVEL"],
+        names: [FUEL_LEVEL],
         totalHz: 0,
         perQueryHz: 0,
       });
@@ -65,14 +70,14 @@ describe("QueryRoundRobinController", () => {
         profiles: [universalPidProfile],
       });
 
-      vehicle.updateQueryRoundRobin(["FUEL_LEVEL", "FUEL_LEVEL", "RPM"]);
+      vehicle.updateQueryRoundRobin([FUEL_LEVEL, FUEL_LEVEL, RPM]);
 
       expect(vehicle.queryRoundRobinStatus()).toEqual({
         hzByName: {
-          FUEL_LEVEL: 0,
-          RPM: 0,
+          [FUEL_LEVEL]: 0,
+          [RPM]: 0,
         },
-        names: ["FUEL_LEVEL", "RPM"],
+        names: [FUEL_LEVEL, RPM],
         totalHz: 0,
         perQueryHz: 0,
       });
@@ -99,15 +104,15 @@ describe("QueryRoundRobinController", () => {
         obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3000), 0x0c),
       );
 
-      vehicle.updateQueryRoundRobin(["RPM"]);
+      vehicle.updateQueryRoundRobin([RPM]);
       await vi.advanceTimersByTimeAsync(0);
-      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+      expect(vehicle.state.get<number>(RPM)).toBe(3000);
 
-      vehicle.updateQueryRoundRobin(["RPM"]);
+      vehicle.updateQueryRoundRobin([RPM]);
       await vi.advanceTimersByTimeAsync(200);
 
-      expect(vehicle.queryRoundRobinStatus().names).toEqual(["RPM"]);
-      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+      expect(vehicle.queryRoundRobinStatus().names).toEqual([RPM]);
+      expect(vehicle.state.get<number>(RPM)).toBe(3000);
 
       vehicle.updateQueryRoundRobin([]);
     } finally {
@@ -135,15 +140,15 @@ describe("QueryRoundRobinController", () => {
         obdResponsePayload(vehicle.dbc.encodeSignal("ECT", 90), 0x05),
       );
 
-      vehicle.updateQueryRoundRobin(["RPM", "ECT"]);
+      vehicle.updateQueryRoundRobin([RPM, ECT]);
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+      expect(vehicle.state.get<number>(RPM)).toBe(3000);
 
       await vi.advanceTimersByTimeAsync(2000);
 
-      expect(vehicle.state.get<number>("ECT")).toBe(90);
-      expect(vehicle.queryRoundRobinStatus().names).toEqual(["RPM", "ECT"]);
+      expect(vehicle.state.get<number>(ECT)).toBe(90);
+      expect(vehicle.queryRoundRobinStatus().names).toEqual([RPM, ECT]);
 
       vehicle.updateQueryRoundRobin([]);
     } finally {
@@ -167,9 +172,9 @@ describe("QueryRoundRobinController", () => {
         obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3000), 0x0c),
       );
 
-      vehicle.updateQueryRoundRobin(["RPM"]);
+      vehicle.updateQueryRoundRobin([RPM]);
       await vi.advanceTimersByTimeAsync(0);
-      expect(vehicle.state.get<number>("RPM")).toBe(3000);
+      expect(vehicle.state.get<number>(RPM)).toBe(3000);
 
       transport.scriptPidResponse(
         obdRequestFrame(0x01, 0x0c),
@@ -177,18 +182,18 @@ describe("QueryRoundRobinController", () => {
       );
 
       await vi.advanceTimersByTimeAsync(100);
-      expect(vehicle.state.get<number>("RPM")).toBe(3100);
+      expect(vehicle.state.get<number>(RPM)).toBe(3100);
 
       transport.clearPidResponses();
       await vi.advanceTimersByTimeAsync(100);
-      expect(vehicle.state.get<number>("RPM")).toBe(3100);
+      expect(vehicle.state.get<number>(RPM)).toBe(3100);
 
       transport.scriptPidResponse(
         obdRequestFrame(0x01, 0x0c),
         obdResponsePayload(vehicle.dbc.encodeSignal("RPM", 3200), 0x0c),
       );
       await vi.advanceTimersByTimeAsync(250);
-      expect(vehicle.state.get<number>("RPM")).toBe(3200);
+      expect(vehicle.state.get<number>(RPM)).toBe(3200);
 
       vehicle.updateQueryRoundRobin([]);
     } finally {
