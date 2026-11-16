@@ -1,6 +1,6 @@
 {
   "name": "can-opener-js",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Signal-first virtual vehicle library with per-vehicle DBC bindings, transport, APIs, and state.",
   "type": "module",
   "main": "./dist/index.cjs",
