@@ -1,13 +1,106 @@
 import { describe, expect, it } from "vitest";
+import { CapabilityRegistry } from "../src/profile/CapabilityRegistry.js";
 import { loadFormat1 } from "../src/profile/loaders/format1.js";
 import { ProfileLoader } from "../src/profile/ProfileLoader.js";
-import type { VehicleProfileSource } from "../src/profile/types.js";
+import type { LoadedVehicleProfile, VehicleProfileSource } from "../src/profile/types.js";
 import { testVehicleDbc } from "./fixtures.js";
 
 /** Format 1 profiles as parsed, before `ProfileLoader` maps them onto VSS paths. */
 function loadFormat1Profiles(sources: readonly VehicleProfileSource[]) {
   return sources.map(loadFormat1);
 }
+
+describe("profile endpoint priority", () => {
+  it("scopes property queries, direct writes, and step endpoints without mutating the profiles", () => {
+    const action = {
+      name: "SET_LEVEL",
+      endpoint: "diagnostics",
+      steps: [{ endpoint: "diagnostics", send: new Uint8Array([2]) }],
+    };
+    const profile: LoadedVehicleProfile = {
+      name: "base",
+      dbcFiles: [],
+      canBuses: [],
+      endpoints: [{ name: "diagnostics", requestId: 200, responseRanges: [] }],
+      properties: [{
+        path: "Custom.Level",
+        query: { name: "Custom.Level", endpoint: "diagnostics", send: new Uint8Array([1]) },
+        write: { direct: action },
+      }],
+      queries: [],
+      actions: [action],
+    };
+    const override: LoadedVehicleProfile = {
+      ...profile,
+      name: "override",
+      endpoints: [{ name: "diagnostics", requestId: 400, responseRanges: [] }],
+      properties: [],
+      actions: [],
+    };
+    const registry = new CapabilityRegistry();
+    registry.load([profile, override]);
+
+    const query = registry.resolvePolledQuery("Custom.Level");
+    expect(registry.resolveEndpoint(query.endpoint).requestId).toBe(200);
+    for (const binding of [registry.resolveAction("SET_LEVEL"), registry.resolveWrite("Custom.Level", 1)]) {
+      expect(registry.resolveEndpoint(binding.endpoint!).requestId).toBe(200);
+      expect(registry.resolveEndpoint(binding.steps[0]!.endpoint!).requestId).toBe(200);
+    }
+    expect(profile.properties[0]!.query!.endpoint).toBe("diagnostics");
+    expect(profile.properties[0]!.write!.direct).toBe(action);
+    expect(action.endpoint).toBe("diagnostics");
+    expect(action.steps[0]!.endpoint).toBe("diagnostics");
+    expect(profile.endpoints[0]!.name).toBe("diagnostics");
+
+    registry.load([override]);
+    expect(() => registry.resolvePolledQuery("Custom.Level")).toThrow();
+    expect(() => registry.resolveEndpoint("1:diagnostics")).toThrow("Unknown profile endpoint");
+    expect(registry.resolveEndpoint("diagnostics").requestId).toBe(400);
+  });
+
+  it("keeps queries and actions bound to their profile's endpoints", () => {
+    const source = (requestId: number, allowedKeys?: VehicleProfileSource["allowedKeys"]): VehicleProfileSource => ({
+      name: `${requestId}.yaml`,
+      content: `version: 1
+endpoints:
+  diagnostics:
+    request_id: ${requestId}
+queries:
+  CUSTOM_QUERY:
+    endpoint: diagnostics
+    send: [1]
+actions:
+  CUSTOM_ACTION:
+    endpoint: diagnostics
+    send: [2]
+  HORN:
+    endpoint: diagnostics
+    send: [3]
+`,
+      dbcFiles: [],
+      ...(allowedKeys === undefined ? {} : { allowedKeys }),
+    });
+    const loader = new ProfileLoader();
+    const registry = new CapabilityRegistry();
+    const low = source(200);
+    const high = source(400, { queries: [], actions: [] });
+    registry.load(loader.load([low, high]));
+
+    const endpointId = (name: string) => registry.resolveEndpoint(name).requestId;
+    expect(registry.resolveEndpoint("diagnostics").requestId).toBe(400);
+    expect(endpointId(registry.resolveQuery("CUSTOM_QUERY").endpoint)).toBe(200);
+    const action = registry.resolveAction("CUSTOM_ACTION");
+    expect(action.endpoint).toBeDefined();
+    expect(endpointId(action.endpoint!)).toBe(200);
+    const write = registry.resolveWrite("Vehicle.Body.Horn.IsActive", true);
+    expect(endpointId(write.steps[0]?.endpoint ?? write.endpoint!)).toBe(200);
+
+    registry.load(loader.load([low, source(400)]));
+    expect(endpointId(registry.resolveQuery("CUSTOM_QUERY").endpoint)).toBe(400);
+    const overridden = registry.resolveWrite("Vehicle.Body.Horn.IsActive", true);
+    expect(endpointId(overridden.steps[0]?.endpoint ?? overridden.endpoint!)).toBe(400);
+  });
+});
 
 describe("ProfileLoader with format 1 profiles", () => {
   it("skips placeholder actions that do not declare send bytes or steps", () => {

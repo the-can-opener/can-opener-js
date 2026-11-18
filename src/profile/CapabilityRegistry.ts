@@ -46,18 +46,48 @@ export class CapabilityRegistry {
     for (const config of buses) {
       this.buses.set(config.bus, config);
     }
-    for (const profile of profiles) {
+    for (const [index, profile] of profiles.entries()) {
+      // Keep each binding attached to its profile's endpoints when later profiles reuse their names.
+      const endpointNames = new Map(profile.endpoints.map((endpoint) => [endpoint.name, `${index}:${endpoint.name}`]));
+      const endpointName = (name: string): string => endpointNames.get(name) ?? name;
+      const scopeAction = (action: ProfileAction): ProfileAction => ({
+        ...action,
+        ...(action.endpoint !== undefined ? { endpoint: endpointName(action.endpoint) } : {}),
+        steps: action.steps.map((step) => ({
+          ...step,
+          ...(step.endpoint !== undefined ? { endpoint: endpointName(step.endpoint) } : {}),
+        })),
+      });
+      const scopeQuery = (query: ProfileQuery): ProfileQuery => ({ ...query, endpoint: endpointName(query.endpoint) });
       for (const endpoint of profile.endpoints) {
+        const name = endpointName(endpoint.name);
         this.endpoints.set(endpoint.name, endpoint);
+        this.endpoints.set(name, { ...endpoint, name });
       }
       for (const property of profile.properties) {
-        this.properties.set(property.path, mergeProperty(this.properties.get(property.path), property));
+        const scoped = { ...property };
+        if (property.query !== undefined) {
+          scoped.query = scopeQuery(property.query);
+        }
+        if (property.write !== undefined) {
+          const write = { ...property.write };
+          if (write.direct !== undefined) {
+            write.direct = scopeAction(write.direct);
+          }
+          if (write.cases !== undefined) {
+            write.cases = Object.fromEntries(
+              Object.entries(write.cases).map(([key, action]) => [key, scopeAction(action)]),
+            );
+          }
+          scoped.write = write;
+        }
+        this.properties.set(property.path, mergeProperty(this.properties.get(property.path), scoped));
       }
       for (const query of profile.queries) {
-        this.queries.set(query.name, query);
+        this.queries.set(query.name, scopeQuery(query));
       }
       for (const action of profile.actions) {
-        this.actions.set(action.name, action);
+        this.actions.set(action.name, scopeAction(action));
       }
     }
 
