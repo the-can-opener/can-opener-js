@@ -141,16 +141,21 @@ function parseDocument(content: string, name: string): object {
 }
 
 /**
- * Channel `canN` is bus N. Any other channel name takes the lowest bus no
+ * Channel `canN` is bus N. Any other declared channel takes the lowest bus no
  * `canN` channel uses, in declaration order.
+ *
+ * Endpoint channels that the package does not declare do not allocate a bus.
+ * Community packages name their bus `vehicle` and still ship queries whose
+ * endpoint says `can0`. Treating that undeclared name as bus 0 used to push
+ * `vehicle` onto bus 1, so the signals and actions loaded but never ran.
  */
 function channelBuses(manifest: Format2Manifest, composed: ComposedPackage): Map<string, number> {
   const names = new Set<string>(Object.keys(composed.channels));
-  for (const endpoint of Object.values(composed.endpoints)) {
-    names.add(endpoint.channel ?? DEFAULT_CHANNEL);
-  }
   for (const dbc of Object.values(manifest.dbc ?? {})) {
-    names.add(dbc.channel ?? DEFAULT_CHANNEL);
+    const channel = dbc.channel ?? DEFAULT_CHANNEL;
+    if (composed.channels[channel] !== undefined || /^can\d+$/u.test(channel)) {
+      names.add(channel);
+    }
   }
 
   const buses = new Map<string, number>();

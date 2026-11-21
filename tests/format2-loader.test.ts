@@ -310,6 +310,57 @@ describe("format 2 loader", () => {
     expect(hvac?.endpoints[0]?.bus).toBeUndefined();
   });
 
+  it("keeps a declared vehicle channel on bus 0 when an endpoint names can0", () => {
+    const profile = readProfileSource({
+      name: "community.yaml",
+      content: [
+        "manifest: 1",
+        "format: 2",
+        "id: org.example.community",
+        "version: 1.0.0",
+        "name: Community",
+        "vss: '6.1'",
+        "channels:",
+        "  vehicle:",
+        "    protocol: can",
+        "    configuration: runtime",
+        "endpoints:",
+        "  obd:",
+        "    channel: can0",
+        "    protocol: isotp",
+        "    tx: '7E0'",
+        "    rx: ['7E8']",
+        "    id_format: standard",
+        "    timeout_ms: 500",
+        "  body:",
+        "    channel: vehicle",
+        "    protocol: can",
+        "    tx: '35D'",
+        "    id_format: standard",
+        "properties:",
+        "  Vehicle.Speed:",
+        "    read:",
+        "      signal:",
+        "        channel: vehicle",
+        "        id: '354'",
+        "        id_format: standard",
+        "        length: 8",
+        "        decode:",
+        "          start_bit: 0",
+        "          bits: 16",
+        "          bit_order: lsb0",
+        "          type: uint",
+        "          scale: 0.01",
+      ].join("\n"),
+      dbcFiles: [],
+    });
+
+    const speed = profile?.properties.find((property) => property.path === "Vehicle.Speed");
+    expect(speed?.signal && "frame" in speed.signal ? speed.signal.bus : "missing").toBeUndefined();
+    expect(profile?.endpoints.find((endpoint) => endpoint.name === "body")?.bus).toBeUndefined();
+    expect(profile?.endpoints.find((endpoint) => endpoint.name === "obd")?.bus).toBeUndefined();
+  });
+
   it("keeps hex CAN IDs that YAML would read as numbers", () => {
     const [profile] = new ProfileLoader().load([universalObdPackage.source]);
 
